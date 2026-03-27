@@ -581,7 +581,7 @@ function ReportModal(p) {
       doc.text("Panorama",32,64);
       doc.text("de Resultados",32,80);
       doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);
-      doc.text("An\u00e1lise trimestral das empresas do seu portf\u00f3lio",32,98);
+      doc.text("Análise trimestral das empresas do seu portfólio",32,98);
       if(clientName.trim()){
         doc.setFontSize(7.5);doc.setFont("helvetica","normal");setC(C.secondary);
         doc.text("ELABORADO PARA",32,170);
@@ -629,7 +629,7 @@ function ReportModal(p) {
         doc.setFontSize(16);doc.setFont("helvetica","bold");setC(C.title);
         doc.text(s.ticker,ML+4,y+7);
         doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);
-        doc.text(s.name+"  \u00B7  "+s.quarter,ML+4,y+13);
+        doc.text(s.name+"  ·  "+s.quarter,ML+4,y+13);
 
         var badgeW=28;var badgeX=W-MR-badgeW-4;
         var sc=s.rankScore||0;
@@ -676,12 +676,12 @@ function ReportModal(p) {
         }
 
         if(fields.tese&&s.thesis)drawText("TESE DE INVESTIMENTO",s.thesis,C.title);
-        if(fields.thesisPros)drawBullets("PONTOS FAVOR\u00c1VEIS",s.thesisPros,"+",C.positive);
+        if(fields.thesisPros)drawBullets("PONTOS FAVORÁVEIS",s.thesisPros,"+",C.positive);
         if(fields.thesisCons)drawBullets("RISCOS",s.thesisCons,"-",C.negative);
-        if(fields.resultado&&s.result)drawText("RESULTADO  \u00B7  "+s.quarter,s.result,C.amber);
+        if(fields.resultado&&s.result)drawText("RESULTADO  ·  "+s.quarter,s.result,C.amber);
         if(fields.resultPros)drawBullets("DESTAQUES",s.resultPros,"+",C.positive);
-        if(fields.resultCons)drawBullets("ATEN\u00c7\u00c3O",s.resultCons,"-",C.negative);
-        if(fields.sunoView&&s.sunoView)drawText("VIS\u00c3O SUNO",s.sunoView,C.accent);
+        if(fields.resultCons)drawBullets("ATENÇÃO",s.resultCons,"-",C.negative);
+        if(fields.sunoView&&s.sunoView)drawText("VISÃO SUNO",s.sunoView,C.accent);
 
         y+=3;setD(C.rule);doc.line(ML,y,ML+25,y);y+=10;
       }
@@ -886,7 +886,7 @@ function ClientProfileEditor(p) {
       </div>
       <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"8px",marginBottom:"8px"}}>
         <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-          <button onClick={function(){set("hasEmergencyReserve",!prof.hasEmergencyReserve);}} style={{width:"18px",height:"18px",borderRadius:"4px",border:prof.hasEmergencyReserve?"2px solid #4ade80":"2px solid rgba(255,255,255,0.15)",background:prof.hasEmergencyReserve?"#4ade80":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"#fff",cursor:"pointer",flexShrink:0}}>{prof.hasEmergencyReserve?"\u2713":""}</button>
+          <button onClick={function(){set("hasEmergencyReserve",!prof.hasEmergencyReserve);}} style={{width:"18px",height:"18px",borderRadius:"4px",border:prof.hasEmergencyReserve?"2px solid #4ade80":"2px solid rgba(255,255,255,0.15)",background:prof.hasEmergencyReserve?"#4ade80":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"#fff",cursor:"pointer",flexShrink:0}}>{prof.hasEmergencyReserve?"✓":""}</button>
           <span style={{fontSize:"11px",color:"rgba(255,255,255,0.5)"}}>Possui reserva de emergência adequada</span>
         </div>
       </div>
@@ -971,7 +971,7 @@ function ClientProfilesModal(p) {
             <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>{editing?"Editar Perfil":"Perfis de Clientes"}</div>
             <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>{editing?"Dados do investidor":"Cadastro de perfis para relatórios consultivos"}</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer",padding:"4px 8px"}}>{"\u2715"}</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer",padding:"4px 8px"}}>{"✕"}</button>
         </div>
         <div style={{padding:"16px 24px 24px"}}>
           {!editing && (<div>
@@ -1404,7 +1404,7 @@ function ConsultiveReportModal(p) {
       function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
       function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
       var y=0;
-      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELAT\u00d3RIO CONSULTIVO",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
+      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO CONSULTIVO",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
       function newPage(){doc.addPage();drawHeader();return 18;}
       function chk(needed){if(y+needed>H-16){y=newPage();return true;}return false;}
       var clientName = editingProfile ? editingProfile.name : "";
@@ -1412,15 +1412,15 @@ function ConsultiveReportModal(p) {
       // COVER
       setF(C.accent);doc.rect(0,0,W,1,"F");setF(C.accent);doc.rect(24,40,0.8,100,"F");
       doc.setFontSize(8);doc.setFont("helvetica","bold");setC(C.caption);doc.text("SUNO CONSULTORIA",32,46);
-      doc.setFontSize(34);doc.setFont("helvetica","bold");setC(C.black);doc.text("Relat\u00f3rio",32,64);doc.text("Consultivo",32,80);
-      doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("An\u00e1lise personalizada — Trip\u00e9 Estrat\u00e9gico",32,98);
-      if(period.trim()){doc.setFontSize(9);doc.text("Per\u00edodo: "+period.trim(),32,108);}
+      doc.setFontSize(34);doc.setFont("helvetica","bold");setC(C.black);doc.text("Relatório",32,64);doc.text("Consultivo",32,80);
+      doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("Análise personalizada — Tripé Estratégico",32,98);
+      if(period.trim()){doc.setFontSize(9);doc.text("Período: "+period.trim(),32,108);}
       if(clientName){doc.setFontSize(7.5);setC(C.secondary);doc.text("ELABORADO PARA",32,170);doc.setFontSize(18);doc.setFont("helvetica","bold");setC(C.title);doc.text(clientName,32,179);}
       if(consultorName.trim()){doc.setFontSize(7.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("CONSULTOR",32,200);doc.setFontSize(10.5);setC(C.body);doc.text(consultorName.trim(),32,207);}
       setD(C.caption);doc.line(32,268,W-MR,268);doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(new Date().toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"}),32,274);setF(C.accent);doc.rect(0,H-1,W,1,"F");
 
       // STRATEGY
-      y=newPage();doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.accent);doc.text("VIS\u00c3O ESTRAT\u00c9GICA CONSOLIDADA",ML,y);y+=4;setF(C.accent);doc.rect(ML,y,25,0.4,"F");y+=6;
+      y=newPage();doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.accent);doc.text("VISÃO ESTRATÉGICA CONSOLIDADA",ML,y);y+=4;setF(C.accent);doc.rect(ML,y,25,0.4,"F");y+=6;
       doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);
       var sLines=wrap(strategyText,CW-4,8.5);
       for(var sli=0;sli<sLines.length;sli++){chk(4.5);doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);doc.text(sLines[sli],ML+2,y);y+=4.5;}
@@ -1437,7 +1437,7 @@ function ConsultiveReportModal(p) {
         // Header card
         setF(C.bg_card);setD(C.rule);doc.rect(ML,y-1,CW,22,"DF");
         doc.setFontSize(16);doc.setFont("helvetica","bold");setC(C.title);doc.text(c.ticker,ML+4,y+7);
-        doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(c.name+"  \u00B7  "+(c.class||""),ML+4,y+13);
+        doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(c.name+"  ·  "+(c.class||""),ML+4,y+13);
         if(c.suggestedValue){doc.setFontSize(7);setC(C.caption);doc.text("Sugerido: R$ "+c.suggestedValue.toLocaleString("pt-BR",{minimumFractionDigits:0})+" ("+c.suggestedPercent.toFixed(1)+"%)",ML+4,y+18);}
 
         // Verdict + Priority badges
@@ -1453,18 +1453,18 @@ function ConsultiveReportModal(p) {
         function drawSection(label,text,lCol){chk(12);doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(lCol);doc.text(label,ML+2,y);y+=5;doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.body);var ls=wrap(text,CW-6,8);for(var li=0;li<ls.length;li++){chk(4.5);doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.body);doc.text(ls[li],ML+2,y);y+=4;}y+=3;}
         function drawBullets(label,items,bChar,bCol){if(!items||!items.length)return;chk(10);doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(bCol);doc.text(label,ML+2,y);y+=5;for(var ii=0;ii<items.length;ii++){chk(5);doc.setFontSize(7.5);doc.setFont("helvetica","bold");setC(bCol);doc.text(bChar,ML+3,y);doc.setFont("helvetica","normal");setC(C.body);var il=wrap(items[ii],CW-12,7.5);for(var jj=0;jj<il.length;jj++){doc.setFontSize(7.5);doc.setFont("helvetica","normal");setC(C.body);doc.text(il[jj],ML+8,y);y+=3.6;}y+=0.6;}y+=3;}
 
-        if(an.overview)drawSection("VIS\u00c3O GERAL",an.overview,C.title);
+        if(an.overview)drawSection("VISÃO GERAL",an.overview,C.title);
         if(an.fundamentals)drawSection("FUNDAMENTOS E MOMENTO",an.fundamentals,C.amber);
         drawBullets("OPORTUNIDADES",an.opportunities,"+",C.positive);
         drawBullets("RISCOS",an.risks,"-",C.negative);
-        if(an.recommendation)drawSection("RECOMENDA\u00c7\u00c3O",an.recommendation,C.accent);
+        if(an.recommendation)drawSection("RECOMENDAÇÃO",an.recommendation,C.accent);
 
         y+=3;setD(C.rule);doc.line(ML,y,ML+25,y);y+=10;
       }
 
       // Disclaimer
       chk(20);y+=5;doc.setFontSize(6);doc.setFont("helvetica","italic");setC(C.muted);
-      var discLines=wrap("Este relat\u00f3rio tem car\u00e1ter informativo e n\u00e3o constitui recomenda\u00e7\u00e3o de investimento. As an\u00e1lises s\u00e3o baseadas em dados p\u00fablicos e relat\u00f3rios da Suno Research. Investimentos envolvem riscos. Consulte seu assessor antes de tomar decis\u00f5es.",CW,6);
+      var discLines=wrap("Este relatório tem caráter informativo e não constitui recomendação de investimento. As análises são baseadas em dados públicos e relatórios da Suno Research. Investimentos envolvem riscos. Consulte seu assessor antes de tomar decisões.",CW,6);
       for(var dli=0;dli<discLines.length;dli++){doc.text(discLines[dli],ML,y);y+=3;}
 
       // Page numbers
@@ -1491,17 +1491,17 @@ function ConsultiveReportModal(p) {
         {/* Header */}
         <div style={{padding:"20px 24px 16px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
-            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Relat\u00f3rio Consultivo — Trip\u00e9</div>
-            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Perfil + Journey Book + Intelig\u00eancia Suno</div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Relatório Consultivo — Tripé</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Perfil + Journey Book + Inteligência Suno</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer",padding:"4px 8px"}}>{"\u2715"}</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer",padding:"4px 8px"}}>{"✕"}</button>
         </div>
 
         {/* Steps */}
         <div style={{padding:"10px 24px",display:"flex",gap:"3px",borderBottom:"1px solid rgba(255,255,255,0.04)",overflowX:"auto"}}>
           {CONSULT_STEPS.map(function(s){
             var isActive=s===step;var idx=CONSULT_STEPS.indexOf(s);var curIdx=CONSULT_STEPS.indexOf(step);var isDone=idx<curIdx;
-            return <div key={s} style={{flex:1,textAlign:"center",padding:"5px 3px",borderRadius:"6px",fontSize:"8px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.3px",background:isActive?"rgba(220,38,38,0.12)":isDone?"rgba(74,222,128,0.06)":"rgba(255,255,255,0.02)",color:isActive?"#DC2626":isDone?"#4ade80":"rgba(255,255,255,0.2)",border:isActive?"1px solid rgba(220,38,38,0.2)":"1px solid transparent",whiteSpace:"nowrap"}}>{isDone?"\u2713 ":""}{STEP_LABELS[s]}</div>;
+            return <div key={s} style={{flex:1,textAlign:"center",padding:"5px 3px",borderRadius:"6px",fontSize:"8px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.3px",background:isActive?"rgba(220,38,38,0.12)":isDone?"rgba(74,222,128,0.06)":"rgba(255,255,255,0.02)",color:isActive?"#DC2626":isDone?"#4ade80":"rgba(255,255,255,0.2)",border:isActive?"1px solid rgba(220,38,38,0.2)":"1px solid transparent",whiteSpace:"nowrap"}}>{isDone?"✓ ":""}{STEP_LABELS[s]}</div>;
           })}
         </div>
 
@@ -1526,7 +1526,7 @@ function ConsultiveReportModal(p) {
                     <button onClick={function(){setShowProfileEditor(!showProfileEditor);}} style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"3px 8px",cursor:"pointer",fontWeight:600}}>{showProfileEditor?"Recolher":"Editar"}</button>
                   </div>
                   {!showProfileEditor&&editingProfile.name&&(<div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",lineHeight:1.6}}>
-                    {editingProfile.age&&editingProfile.age+" anos"}{editingProfile.profession&&" \u00B7 "+editingProfile.profession}{editingProfile.riskProfile&&" \u00B7 "+editingProfile.riskProfile}{editingProfile.horizon&&" \u00B7 "+editingProfile.horizon+" anos"}{editingProfile.totalWealth&&" \u00B7 R$ "+parseFloat(editingProfile.totalWealth).toLocaleString("pt-BR")}
+                    {editingProfile.age&&editingProfile.age+" anos"}{editingProfile.profession&&" · "+editingProfile.profession}{editingProfile.riskProfile&&" · "+editingProfile.riskProfile}{editingProfile.horizon&&" · "+editingProfile.horizon+" anos"}{editingProfile.totalWealth&&" · R$ "+parseFloat(editingProfile.totalWealth).toLocaleString("pt-BR")}
                   </div>)}
                   {showProfileEditor&&(<div><ClientProfileEditor profile={editingProfile} onChange={function(u){setEditingProfile(u);}} compact={true}/><button onClick={function(){saveProfileInline();setShowProfileEditor(false);}} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",marginTop:"10px",width:"100%"})}>Salvar perfil</button></div>)}
                 </div>
@@ -1534,10 +1534,10 @@ function ConsultiveReportModal(p) {
             </div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
               <div><label style={lS}>Consultor</label><input value={consultorName} onChange={function(e){setConsultorName(e.target.value);}} style={iS}/></div>
-              <div><label style={lS}>Per\u00edodo</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} placeholder="Ex: 1T26" style={iS}/></div>
+              <div><label style={lS}>Período</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} placeholder="Ex: 1T26" style={iS}/></div>
             </div>
             <button onClick={function(){if(editingProfile)setStep("journey");}} disabled={!editingProfile} style={Object.assign({},btnBase,{width:"100%",background:editingProfile?"#DC2626":"rgba(255,255,255,0.05)",color:editingProfile?"#fff":"rgba(255,255,255,0.3)"})}>
-              {editingProfile?"Prosseguir \u2192 Journey Book":"Selecione um cliente primeiro"}
+              {editingProfile?"Prosseguir → Journey Book":"Selecione um cliente primeiro"}
             </button>
           </div>)}
 
@@ -1547,7 +1547,7 @@ function ConsultiveReportModal(p) {
               <label style={lS}>Upload do Journey Book (Pilar 2)</label>
               <div style={{border:"2px dashed rgba(220,38,38,0.2)",borderRadius:"10px",padding:"24px",textAlign:"center",cursor:"pointer",background:"rgba(220,38,38,0.02)"}} onClick={function(){fileRef.current&&fileRef.current.click();}}>
                 <input ref={fileRef} type="file" accept=".pdf" onChange={handleJBUpload} style={{display:"none"}}/>
-                {jbFileName?(<div><div style={{fontSize:"13px",fontWeight:700,color:"#DC2626"}}>{jbFileName}</div>{jbData&&<div style={{fontSize:"11px",color:"#4ade80",marginTop:"4px"}}>\u2713 Processado — {(jbData.suggestedPortfolio||[]).length} ativos extra\u00eddos</div>}</div>):(<div><div style={{fontSize:"24px",marginBottom:"6px"}}>&#128218;</div><div style={{fontSize:"12px",color:"rgba(255,255,255,0.4)"}}>Clique para selecionar o PDF do Journey Book</div></div>)}
+                {jbFileName?(<div><div style={{fontSize:"13px",fontWeight:700,color:"#DC2626"}}>{jbFileName}</div>{jbData&&<div style={{fontSize:"11px",color:"#4ade80",marginTop:"4px"}}>✓ Processado — {(jbData.suggestedPortfolio||[]).length} ativos extraídos</div>}</div>):(<div><div style={{fontSize:"24px",marginBottom:"6px"}}>&#128218;</div><div style={{fontSize:"12px",color:"rgba(255,255,255,0.4)"}}>Clique para selecionar o PDF do Journey Book</div></div>)}
               </div>
             </div>
             {jbFileName&&!jbData&&(<button onClick={parseJourneyBook} disabled={jbParsing} style={Object.assign({},btnBase,{width:"100%",background:jbParsing?"rgba(220,38,38,0.3)":"#DC2626",color:"#fff",marginBottom:"10px"})}>{jbParsing?"Extraindo dados com IA...":"Processar Journey Book com IA"}</button>)}
@@ -1555,15 +1555,15 @@ function ConsultiveReportModal(p) {
             {jbData&&(<div>
               {/* Summary of extracted data */}
               <div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"12px"}}>
-                <div style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>\u2713 Journey Book processado</div>
-                {jbData.allocationMacro&&jbData.allocationMacro.classes&&(<div style={{marginBottom:"8px"}}><div style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.3)",marginBottom:"4px"}}>ALOCA\u00c7\u00c3O MACRO</div>{jbData.allocationMacro.classes.map(function(c){var diff=c.suggestedPercent-c.currentPercent;return <div key={c.name} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",fontSize:"10px"}}><span style={{color:"rgba(255,255,255,0.5)"}}>{c.name}</span><span><span style={{color:"rgba(255,255,255,0.3)"}}>{c.currentPercent}%</span><span style={{color:"rgba(255,255,255,0.15)",margin:"0 4px"}}>\u2192</span><span style={{color:"#fbbf24",fontWeight:700}}>{c.suggestedPercent}%</span>{diff!==0&&<span style={{fontSize:"9px",color:diff>0?"#4ade80":"#f87171",marginLeft:"4px"}}>({diff>0?"+":""}{diff})</span>}</span></div>;})}</div>)}
+                <div style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>✓ Journey Book processado</div>
+                {jbData.allocationMacro&&jbData.allocationMacro.classes&&(<div style={{marginBottom:"8px"}}><div style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.3)",marginBottom:"4px"}}>ALOCAÇÃO MACRO</div>{jbData.allocationMacro.classes.map(function(c){var diff=c.suggestedPercent-c.currentPercent;return <div key={c.name} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",fontSize:"10px"}}><span style={{color:"rgba(255,255,255,0.5)"}}>{c.name}</span><span><span style={{color:"rgba(255,255,255,0.3)"}}>{c.currentPercent}%</span><span style={{color:"rgba(255,255,255,0.15)",margin:"0 4px"}}>→</span><span style={{color:"#fbbf24",fontWeight:700}}>{c.suggestedPercent}%</span>{diff!==0&&<span style={{fontSize:"9px",color:diff>0?"#4ade80":"#f87171",marginLeft:"4px"}}>({diff>0?"+":""}{diff})</span>}</span></div>;})}</div>)}
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",fontSize:"10px"}}>
                   <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.suggestedPortfolio||[]).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Ativos sugeridos</div></div>
                   <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com racional</div></div>
-                  <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).filter(function(r){return r.ceilingPrice;}).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com pre\u00e7o-teto</div></div>
+                  <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).filter(function(r){return r.ceilingPrice;}).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com preço-teto</div></div>
                 </div>
               </div>
-              <button onClick={buildCrossref} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Prosseguir \u2192 Cruzamento Trip\u00e9</button>
+              <button onClick={buildCrossref} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Prosseguir → Cruzamento Tripé</button>
             </div>)}
 
             <button onClick={function(){setStep("profile");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)",marginTop:"8px"})}>&#8592; Voltar</button>
@@ -1577,11 +1577,11 @@ function ConsultiveReportModal(p) {
                 var checked=!!selectedAssets[c.ticker];var an=c.appMatch;
                 var scC=an&&an.rankScore?(an.rankScore>=8?"#4ade80":an.rankScore>=5?"#fbbf24":"#f87171"):"rgba(255,255,255,0.2)";
                 return <div key={c.ticker} style={{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
-                  <div onClick={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{width:"16px",height:"16px",borderRadius:"4px",border:checked?"2px solid #DC2626":"2px solid rgba(255,255,255,0.15)",background:checked?"#DC2626":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:"#fff",cursor:"pointer",flexShrink:0}}>{checked?"\u2713":""}</div>
+                  <div onClick={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{width:"16px",height:"16px",borderRadius:"4px",border:checked?"2px solid #DC2626":"2px solid rgba(255,255,255,0.15)",background:checked?"#DC2626":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:"#fff",cursor:"pointer",flexShrink:0}}>{checked?"✓":""}</div>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
                       <span style={{fontSize:"11px",fontWeight:700,color:"#f1f5f9"}}>{c.ticker}</span>
-                      <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:c.hasAppData?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.hasAppData?"#4ade80":"rgba(255,255,255,0.25)",fontWeight:600}}>{c.hasAppData?"PILAR 1+2":"S\u00d3 JB"}</span>
+                      <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:c.hasAppData?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.hasAppData?"#4ade80":"rgba(255,255,255,0.25)",fontWeight:600}}>{c.hasAppData?"PILAR 1+2":"SÓ JB"}</span>
                       <span style={{fontSize:"9px",color:"rgba(255,255,255,0.2)"}}>{c.class}</span>
                     </div>
                     <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",marginTop:"1px"}}>
@@ -1596,27 +1596,27 @@ function ConsultiveReportModal(p) {
             </div>
             <div style={{display:"flex",gap:"8px"}}>
               <button onClick={function(){setStep("journey");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
-              <button onClick={function(){setStep("generate");}} disabled={selCount===0} style={Object.assign({},btnBase,{flex:1,background:selCount>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCount>0?"#fff":"rgba(255,255,255,0.3)"})}>Gerar An\u00e1lise IA ({selCount} ativos) \u2192</button>
+              <button onClick={function(){setStep("generate");}} disabled={selCount===0} style={Object.assign({},btnBase,{flex:1,background:selCount>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCount>0?"#fff":"rgba(255,255,255,0.3)"})}>Gerar Análise IA ({selCount} ativos) →</button>
             </div>
           </div>)}
 
           {/* STEP 4: Generate */}
           {step==="generate"&&(<div style={{textAlign:"center",padding:"30px 0"}}>
             {!generating&&!error&&(<div>
-              <div style={{fontSize:"14px",fontWeight:600,color:"rgba(255,255,255,0.6)",marginBottom:"8px"}}>Trip\u00e9 pronto: {selCount} ativos para {editingProfile?editingProfile.name:"Cliente"}</div>
-              <div style={{fontSize:"11px",color:"rgba(255,255,255,0.3)",marginBottom:"20px",lineHeight:1.6}}>A IA vai cruzar o Perfil ({editingProfile?editingProfile.riskProfile:""}, {editingProfile?editingProfile.horizon:""} anos) + Journey Book ({(jbData&&jbData.suggestedPortfolio?jbData.suggestedPortfolio.length:0)} ativos sugeridos) + Inteligência Suno ({matchCount} com resultados) para gerar recomenda\u00e7\u00f5es personalizadas.</div>
-              <button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"12px 30px",fontSize:"14px"})}>Iniciar An\u00e1lise Trip\u00e9</button>
+              <div style={{fontSize:"14px",fontWeight:600,color:"rgba(255,255,255,0.6)",marginBottom:"8px"}}>Tripé pronto: {selCount} ativos para {editingProfile?editingProfile.name:"Cliente"}</div>
+              <div style={{fontSize:"11px",color:"rgba(255,255,255,0.3)",marginBottom:"20px",lineHeight:1.6}}>A IA vai cruzar o Perfil ({editingProfile?editingProfile.riskProfile:""}, {editingProfile?editingProfile.horizon:""} anos) + Journey Book ({(jbData&&jbData.suggestedPortfolio?jbData.suggestedPortfolio.length:0)} ativos sugeridos) + Inteligência Suno ({matchCount} com resultados) para gerar recomendações personalizadas.</div>
+              <button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"12px 30px",fontSize:"14px"})}>Iniciar Análise Tripé</button>
             </div>)}
-            {generating&&(<div><div style={{fontSize:"28px",marginBottom:"10px"}}>&#9881;</div><div style={{fontSize:"12px",fontWeight:600,color:"#DC2626",marginBottom:"6px"}}>Gerando an\u00e1lise consultiva...</div><div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>{genProgress}</div></div>)}
+            {generating&&(<div><div style={{fontSize:"28px",marginBottom:"10px"}}>&#9881;</div><div style={{fontSize:"12px",fontWeight:600,color:"#DC2626",marginBottom:"6px"}}>Gerando análise consultiva...</div><div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>{genProgress}</div></div>)}
             {error&&!generating&&(<div><div style={{color:"#f87171",fontSize:"12px",padding:"10px",background:"rgba(220,38,38,0.08)",borderRadius:"8px",marginBottom:"12px"}}>{error}</div><button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff"})}>Tentar novamente</button></div>)}
             <div style={{marginTop:"16px"}}><button onClick={function(){setStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592; Voltar</button></div>
           </div>)}
 
           {/* STEP 5: Review */}
           {step==="review"&&(<div>
-            <div style={{marginBottom:"16px"}}><div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Se\u00e7\u00e3o Estrat\u00e9gica</div><textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);}} rows={6} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px"})}/></div>
+            <div style={{marginBottom:"16px"}}><div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Seção Estratégica</div><textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);}} rows={6} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px"})}/></div>
 
-            <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>An\u00e1lises Individuais (ordenadas por prioridade)</div>
+            <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Análises Individuais (ordenadas por prioridade)</div>
 
             {(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];}).sort(function(a,b){return(analyses[a.ticker].priority||3)-(analyses[b.ticker].priority||3);}).map(function(c){
               var an=analyses[c.ticker];
@@ -1625,37 +1625,37 @@ function ConsultiveReportModal(p) {
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
                   <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
                     <span style={{fontWeight:800,fontSize:"14px",color:"#f1f5f9"}}>{c.ticker}</span>
-                    <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{c.name} \u00B7 {c.class}</span>
+                    <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{c.name} · {c.class}</span>
                     <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.25)"}}>P{an.priority||"?"}</span>
                   </div>
                   <select value={an.verdict||"AGUARDAR"} onChange={function(e){updateAnalysis(c.ticker,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"4px 8px",color:vc[an.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}>
                     <option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option><option value="NOVO">NOVO</option>
                   </select>
                 </div>
-                <div style={{marginBottom:"6px"}}><label style={lS}>Vis\u00e3o Geral</label><textarea value={an.overview||""} onChange={function(e){updateAnalysis(c.ticker,"overview",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
+                <div style={{marginBottom:"6px"}}><label style={lS}>Visão Geral</label><textarea value={an.overview||""} onChange={function(e){updateAnalysis(c.ticker,"overview",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
                 <div style={{marginBottom:"6px"}}><label style={lS}>Fundamentos</label><textarea value={an.fundamentals||""} onChange={function(e){updateAnalysis(c.ticker,"fundamentals",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"6px"}}>
                   <div><label style={lS}>Oportunidades</label><textarea value={(an.opportunities||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"opportunities",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
                   <div><label style={lS}>Riscos</label><textarea value={(an.risks||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"risks",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
                 </div>
-                <div><label style={lS}>Recomenda\u00e7\u00e3o</label><textarea value={an.recommendation||""} onChange={function(e){updateAnalysis(c.ticker,"recommendation",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
+                <div><label style={lS}>Recomendação</label><textarea value={an.recommendation||""} onChange={function(e){updateAnalysis(c.ticker,"recommendation",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
               </div>;
             })}
 
             <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
               <button onClick={function(){setStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
-              <button onClick={function(){setStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir \u2192 PDF</button>
+              <button onClick={function(){setStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir → PDF</button>
             </div>
           </div>)}
 
           {/* STEP 6: PDF */}
           {step==="pdf"&&(<div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relat\u00f3rio pronto</div>
-            <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} \u00B7 {selCount} ativos \u00B7 {period||"Trimestral"}</div>
+            <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório pronto</div>
+            <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {selCount} ativos · {period||"Trimestral"}</div>
             <div style={{background:"#111",borderRadius:"10px",padding:"16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"16px",textAlign:"left",fontSize:"11px",color:"rgba(255,255,255,0.5)",lineHeight:1.8}}>
               &#128196; Capa com nome do cliente e consultor<br/>
-              &#128202; Se\u00e7\u00e3o estrat\u00e9gica consolidada (trip\u00e9)<br/>
-              &#128200; {selCount} an\u00e1lises individuais (vis\u00e3o, fundamentos, oportunidades, riscos, recomenda\u00e7\u00e3o) ordenadas por prioridade<br/>
+              &#128202; Seção estratégica consolidada (tripé)<br/>
+              &#128200; {selCount} análises individuais (visão, fundamentos, oportunidades, riscos, recomendação) ordenadas por prioridade<br/>
               &#128220; Disclaimer legal
             </div>
             <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar e Baixar PDF"}</button>
@@ -1680,8 +1680,8 @@ export default function App() {
   var [showConsultive,setShowConsultive]=useState(false);
   var [showClientProfiles,setShowClientProfiles]=useState(false);
 
-  useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}try{(async function(){var s=await window.storage.get("tt-v7");if(!s||!s.value){s=await window.storage.get("tt-v6");}if(s&&s.value)setData(migrateData(JSON.parse(s.value)));})();}catch(e){};},[]);
-  useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}try{(async function(){await window.storage.set("tt-v7",JSON.stringify(data));})();}catch(e){};},[data]);
+  useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
+  useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
 
   function notify(msg,type){setNotif({msg:msg,type:type||"ok"});setTimeout(function(){setNotif(null);},3500);}
 
