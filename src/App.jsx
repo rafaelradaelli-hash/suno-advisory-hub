@@ -1139,7 +1139,29 @@ function ConsultiveReportModal(p) {
       raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
       var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
       if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-      var parsed = JSON.parse(raw);
+      // Fix common JSON issues from AI output
+      raw = raw.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]"); // trailing commas
+      raw = raw.replace(/\n/g, " ").replace(/\t/g, " "); // newlines in strings
+      raw = raw.replace(/[\x00-\x1F\x7F]/g, " "); // control characters
+      var parsed;
+      try { parsed = JSON.parse(raw); } catch(jsonErr) {
+        // Try to salvage by finding the main object boundaries more carefully
+        console.warn("JSON parse failed, attempting repair:", jsonErr.message);
+        // Attempt: close any unclosed arrays/objects
+        var openBraces = (raw.match(/{/g)||[]).length;
+        var closeBraces = (raw.match(/}/g)||[]).length;
+        var openBrackets = (raw.match(/\[/g)||[]).length;
+        var closeBrackets = (raw.match(/\]/g)||[]).length;
+        var repaired = raw;
+        for (var bi = 0; bi < openBrackets - closeBrackets; bi++) repaired += "]";
+        for (var bri = 0; bri < openBraces - closeBraces; bri++) repaired += "}";
+        repaired = repaired.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]");
+        try { parsed = JSON.parse(repaired); } catch(e2) {
+          // Last resort: try to extract at least partial data
+          console.error("JSON repair also failed:", e2.message);
+          throw new Error("A IA retornou dados incompletos. Tente processar novamente.");
+        }
+      }
       setJbData(parsed);
 
       // Auto-fill profile from JB if profile is empty
