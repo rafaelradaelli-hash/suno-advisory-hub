@@ -1082,14 +1082,38 @@ function ConsultiveReportModal(p) {
     if (!jbFile) return;
     setJbParsing(true); setError("");
     try {
-      var b64 = await new Promise(function(res, rej) {
+      // Extract text from PDF in browser using pdf.js
+      var arrayBuf = await new Promise(function(res, rej) {
         var r = new FileReader();
-        r.onload = function() { res(r.result.split(",")[1]); };
+        r.onload = function() { res(r.result); };
         r.onerror = function() { rej(new Error("Erro leitura")); };
-        r.readAsDataURL(jbFile);
+        r.readAsArrayBuffer(jbFile);
       });
 
-      var sys = 'Voce e um parser de documentos financeiros. Recebera um Journey Book (PDF) da Suno Consultoria. Extraia TODAS as informacoes estruturadas em JSON com esta estrutura EXATA:'
+      // Load pdf.js from CDN if not loaded
+      if (!window.pdfjsLib) {
+        await new Promise(function(res, rej) {
+          var s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+          s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        });
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      }
+
+      var pdf = await window.pdfjsLib.getDocument({data: arrayBuf}).promise;
+      var allText = "";
+      for (var pg = 1; pg <= pdf.numPages; pg++) {
+        var page = await pdf.getPage(pg);
+        var tc = await page.getTextContent();
+        var pageText = tc.items.map(function(item){return item.str;}).join(" ");
+        if (pageText.trim()) allText += "\n\n--- PAGINA " + pg + " ---\n" + pageText;
+      }
+
+      if (allText.length < 200) throw new Error("PDF parece ser apenas imagens (sem texto extraível). Tente um PDF com texto selecionável.");
+
+      // Send extracted text to AI (much smaller than base64 PDF)
+      var sys = 'Voce e um parser de documentos financeiros. Recebera o TEXTO EXTRAIDO de um Journey Book (PDF) da Suno Consultoria. Extraia TODAS as informacoes estruturadas em JSON com esta estrutura EXATA:'
         + ' {"clientInfo":{"name":"","age":0,"profession":"","riskProfile":"","patrimony":0,"monthlyIncome":0,"monthlyExpenses":0,"monthlyContribution":0,"horizon":"","objective":"","desiredIncome":0,"liquidityNeed":""},'
         + '"projections":{"retirementAge":0,"capitalAtRetirement":0,"percentMeta":0,"realReturnRate":"","estimatedCurrentIncome":0,"estimatedRetirementIncome":0,"requiredContribution":0,"ageForMeta":"","evolutionTable":[{"date":"","patrimony":0,"percentMeta":0,"age":0}]},'
         + '"allocationMacro":{"classes":[{"name":"","currentPercent":0,"suggestedPercent":0,"currentValue":0,"suggestedValue":0}],"availableCash":0},'
@@ -1098,17 +1122,14 @@ function ConsultiveReportModal(p) {
         + '"movements":{"sells":[{"ticker":"","value":0,"qty":0}],"buys":[{"ticker":"","value":0,"qty":0}]},'
         + '"assetRationales":[{"ticker":"","class":"","sector":"","currentPrice":0,"ceilingPrice":0,"deltaCeiling":0,"rationale":""}],'
         + '"feeFix":{"value":0,"percent":"","asset":""}}'
-        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes (RF, Acoes, FIIs, Internacional, Alternativo). 2) Para precos-teto, extraia o valor exato. 3) deltaCeiling em percentual. 4) Valores monetarios sem R$ e sem pontos de milhar, use numero puro (ex: 1160837). 5) Percentuais como numeros (ex: 63 nao "63%"). 6) Se um campo nao existe no PDF, use null. 7) Responda SOMENTE com JSON puro, sem markdown.';
+        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes (RF, Acoes, FIIs, Internacional, Alternativo). 2) Para precos-teto, extraia o valor exato. 3) deltaCeiling em percentual. 4) Valores monetarios sem R$ e sem pontos de milhar, use numero puro (ex: 1160837). 5) Percentuais como numeros (ex: 63 nao "63%"). 6) Se um campo nao existe no texto, use null. 7) Responda SOMENTE com JSON puro, sem markdown.';
 
       var resp = await fetch("/api/anthropic", {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514", max_tokens: 8192,
           system: sys,
-          messages: [{role:"user", content: [
-            {type:"document", source:{type:"base64", media_type:"application/pdf", data: b64}},
-            {type:"text", text:"Extraia todas as informacoes deste Journey Book no formato JSON solicitado. Inclua TODOS os ativos de todas as classes."}
-          ]}]
+          messages: [{role:"user", content: "TEXTO DO JOURNEY BOOK (" + pdf.numPages + " paginas):\n" + allText.slice(0, 80000)}]
         })
       });
       if (!resp.ok) { var eb = await resp.text(); throw new Error("API " + resp.status + ": " + eb.slice(0,300)); }
