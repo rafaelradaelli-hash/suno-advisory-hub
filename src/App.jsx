@@ -2613,9 +2613,9 @@ function ConsultiveReportModal(p) {
                   var cartNames=[];(carteirasData.carteiras||[]).forEach(function(cart){if((carteirasData.ativos[cart.id]||[]).length>0)cartNames.push(cart.name);});
 
                   // Map asset to BIAS_CLASSES subclass
-                  function mapToSubclass(ticker, subClass, classe, classHint) {
+                  function mapToSubclass(ticker, subClass, classe, classHint, assetName) {
                     var sc=(subClass||"").toLowerCase(); var cl=(classe||"").toLowerCase(); var ch=(classHint||"").toLowerCase(); var tk=(ticker||"").toUpperCase();
-                    var fullName = (ticker||"").toUpperCase(); // nome completo do ativo (ex: "LCA 91% CDI BANCO BTG")
+                    var fullName = ((ticker||"") + " " + (assetName||"")).toUpperCase(); // combine ticker + name for better matching
 
                     // ── RENDA FIXA: classificar por tipo de indexador ──
                     if(sc==="caixa"||cl==="caixa"||fullName.indexOf("CAIXA")>=0) return "Cash";
@@ -2642,7 +2642,10 @@ function ConsultiveReportModal(p) {
                     }
 
                     // ── RENDA VARIÁVEL ──
+                    // Exception: some tickers ending in 11 are stocks (units), not FIIs
+                    var notFII11 = ["BRBI11","KLBN11","TAEE11","SAPR11","EGIE11","ALUP11","BPAC11","SANB11","RNEW11","TIMS11","VIVT11"];
                     if(sc.indexOf("fii")>=0||sc.indexOf("imobili")>=0||ch.indexOf("fii")>=0) return "FIIs";
+                    if(/^[A-Z]{4}11$/.test(tk) && notFII11.indexOf(tk)<0 && sc.indexOf("aço")<0 && sc!=="ações") return "FIIs";
                     if(sc.indexOf("etf")>=0) {
                       if(/^(IVVB|NASD|HASH|EURP|XINA|ACWI)/i.test(tk)) return "Equities Offshore";
                       return "Ações Brasil";
@@ -2650,7 +2653,7 @@ function ConsultiveReportModal(p) {
                     if(sc.indexOf("aço")>=0||sc==="ações"||ch.indexOf("aço")>=0||ch.indexOf("ações")>=0) return "Ações Brasil";
                     if(sc.indexOf("alter")>=0||ch.indexOf("alter")>=0) return "Alternativos";
                     if(ch.indexOf("intern")>=0||ch.indexOf("offshore")>=0) return "Equities Offshore";
-                    if(/^[A-Z]{4}11$/.test(tk)) return "FIIs";
+                    if(/^[A-Z]{4}11$/.test(tk) && notFII11.indexOf(tk)<0) return "FIIs";
                     if(/^[A-Z]{4}(3|4|5|6)$/.test(tk)) return "Ações Brasil";
                     if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Equities Offshore";
                     return "Ações Brasil";
@@ -2673,43 +2676,44 @@ function ConsultiveReportModal(p) {
                     var pct = ac.suggestedPercent || 0;
                     
                     if (name === "Renda Fixa" || name.indexOf("Renda Fixa") >= 0) {
-                      // Distribute RF among subclasses using JB suggestedPortfolio
-                      var rfAssets = (jbd && jbd.suggestedPortfolio || []).filter(function(a) {
+                      // Calculate RF subclass metas using JB asset VALUES / total portfolio value
+                      var allJbAssets = (jbd && jbd.suggestedPortfolio) || [];
+                      var totalPortfolioValue = allJbAssets.reduce(function(s,a){return s+(a.value||0);},0);
+                      
+                      var rfAssets = allJbAssets.filter(function(a) {
                         var cl = (a.class||"").toLowerCase();
                         return cl.indexOf("renda fixa") >= 0 || cl.indexOf("rf") >= 0 || cl.indexOf("fix") >= 0 || cl.indexOf("crédito") >= 0 || cl.indexOf("credito") >= 0;
                       });
                       
-                      if (rfAssets.length > 0) {
-                        // Calculate total RF value from JB to get proportions
-                        var rfTotal = rfAssets.reduce(function(s,a){return s+(a.value||a.percentPortfolio||0);},0);
-                        var posGroup = {pos:0, ipca:0, pre:0, cash:0};
+                      if (rfAssets.length > 0 && totalPortfolioValue > 0) {
+                        var posVal=0, ipcaVal=0, preVal=0, cashVal=0;
                         
                         rfAssets.forEach(function(a) {
                           var subCl = (a.subclass||a.name||"").toLowerCase();
                           var tk = (a.ticker||a.name||"").toUpperCase();
-                          var val = a.value || a.percentPortfolio || 0;
+                          var val = a.value || 0;
                           
-                          if (subCl.indexOf("caixa") >= 0 || tk.indexOf("CAIXA") >= 0) posGroup.cash += val;
-                          else if (/ipca|inflac|ntn.?b|tesouro ipca/i.test(tk) || /ipca|inflac/i.test(subCl)) posGroup.ipca += val;
-                          else if (/pre.?fix|prefixad|ltn|tesouro pre/i.test(tk) || /pre.?fix/i.test(subCl)) posGroup.pre += val;
-                          else posGroup.pos += val; // CDI, Selic, DI, LCA, LCI, CDB
+                          if (subCl.indexOf("caixa") >= 0 || tk.indexOf("CAIXA") >= 0) cashVal += val;
+                          else if (/ipca|inflac|ntn.?b|tesouro ipca/i.test(tk) || /ipca|inflac/i.test(subCl)) ipcaVal += val;
+                          else if (/pre.?fix|prefixad|ltn|tesouro pre/i.test(tk) || /pre.?fix/i.test(subCl)) preVal += val;
+                          else posVal += val;
                         });
                         
+                        // Meta = proporção interna do indexador × % total da classe RF
+                        // Ex: 48% pós × 63% RF total = 30.2% do patrimônio
+                        var rfTotal = cashVal + posVal + ipcaVal + preVal;
                         if (rfTotal > 0) {
-                          subclassData["Cash"].jb = pct * (posGroup.cash / rfTotal);
-                          subclassData["Pós-fixado"].jb = pct * (posGroup.pos / rfTotal);
-                          subclassData["IPCA+"].jb = pct * (posGroup.ipca / rfTotal);
-                          subclassData["Pré-fixado"].jb = pct * (posGroup.pre / rfTotal);
+                          subclassData["Cash"].jb = (cashVal / rfTotal) * pct;
+                          subclassData["Pós-fixado"].jb = (posVal / rfTotal) * pct;
+                          subclassData["IPCA+"].jb = (ipcaVal / rfTotal) * pct;
+                          subclassData["Pré-fixado"].jb = (preVal / rfTotal) * pct;
                         } else {
-                          // Fallback: all to Pós-fixado
                           subclassData["Pós-fixado"].jb = pct;
                         }
                       } else {
-                        // No RF assets in JB portfolio, check if profile has allocation detail
                         subclassData["Pós-fixado"].jb = pct;
                       }
                     } else {
-                      // Non-RF classes
                       var k = jbMapSimple[name] || name;
                       if (subclassData[k]) subclassData[k].jb = pct;
                     }
@@ -2717,7 +2721,7 @@ function ConsultiveReportModal(p) {
 
                   // Position from Excel
                   posAssets.forEach(function(pa){
-                    var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "");
+                    var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "", pa.name);
                     if(subclassData[mapped]){ subclassData[mapped].posValue += (pa.totalValue||0); }
                   });
                   if(posTotal>0){ ALL_BIAS_ITEMS.forEach(function(item){ subclassData[item].pos = subclassData[item].posValue/posTotal*100; }); }
@@ -2725,7 +2729,7 @@ function ConsultiveReportModal(p) {
                   // Assign crossref assets to subclasses
                   crossrefData.forEach(function(a){
                     var pa=null; for(var pi=0;pi<posAssets.length;pi++){if(posAssets[pi].ticker===a.ticker){pa=posAssets[pi];break;}}
-                    var mapped = mapToSubclass(a.ticker, pa?pa.subClass:"", pa?pa.type:"", a.class);
+                    var mapped = mapToSubclass(a.ticker, pa?pa.subClass:"", pa?pa.type:"", a.class, pa?pa.name:a.name);
                     a._subclass = mapped;
                     a._classTag = BIAS_CLASSES.find(function(g){return g.items.indexOf(mapped)>=0;});
                     a._classTag = a._classTag ? a._classTag.group : "Equities";
@@ -2860,7 +2864,7 @@ function ConsultiveReportModal(p) {
                       var sellBySubclass = {};
                       ALL_BIAS_ITEMS.forEach(function(item){ sellBySubclass[item] = []; });
                       posAssets.filter(function(pa){return pa.totalValue > 0;}).forEach(function(pa){
-                        var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "");
+                        var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "", pa.name);
                         if(sellBySubclass[mapped]) sellBySubclass[mapped].push(pa);
                         else { if(!sellBySubclass["Pós-fixado"]) sellBySubclass["Pós-fixado"]=[]; sellBySubclass["Pós-fixado"].push(pa); }
                       });
