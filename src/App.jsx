@@ -178,11 +178,15 @@ var TONE_OPTIONS = [
   {key:"profissional",label:"Profissional",desc:"Técnico"}
 ];
 var TONE_MAP = {
-  "simples":"Use linguagem BEM SIMPLES, como se falasse com alguem que nunca investiu. Evite TODOS os termos tecnicos. Explique como se fosse para um amigo leigo. Frases curtas.",
-  "intermediario":"Use linguagem acessivel com alguns termos do mercado (explicados brevemente). O cliente tem nocoes basicas de investimentos.",
-  "profissional":"Use linguagem tecnica do mercado financeiro. O cliente e experiente e entende P/L, yield, duration, beta, Sharpe, fluxo de caixa descontado."
+  "simples":"REGRA DE TOM: Escreva como se estivesse explicando para alguem da sua familia que NUNCA investiu. PROIBIDO usar qualquer termo tecnico (P/L, yield, EBITDA, margem, spread, duration, fluxo de caixa, alavancagem, etc). Se precisar mencionar um conceito, explique com palavras do dia-a-dia. Use frases CURTAS (maximo 15 palavras). Use comparacoes simples (ex: 'a empresa lucrou mais do que o esperado' em vez de 'superou o consenso de mercado'). Tom de CONVERSA INFORMAL entre amigos. Evite numeros demais — prefira 'subiu bastante' a '12,3% acima do guidance'. Quando mencionar valores grandes, contextualize (ex: 'lucrou R$200 milhoes, quase o dobro do ano passado').",
+  "intermediario":"REGRA DE TOM: O cliente entende o basico de investimentos (sabe o que e acao, fundo, renda fixa, dividendo) mas NAO domina termos avancados. Pode usar: lucro, receita, dividendo, rentabilidade, CDI, Selic, inflacao, valorizacao. EVITE ou EXPLIQUE brevemente: EBITDA (diga 'lucro operacional'), yield (diga 'retorno em dividendos'), spread, duration, P/L (diga 'preco sobre lucro'). Use paragrafos de 2-3 frases. Inclua numeros importantes mas sem exagerar. Tom profissional mas acessivel — como um consultor explicando para um cliente com 2-3 anos de experiencia.",
+  "profissional":"REGRA DE TOM: Linguagem TECNICA completa de mercado financeiro. Use livremente: P/L, P/VP, EV/EBITDA, yield, spread, duration, beta, Sharpe, fluxo de caixa descontado, margem liquida, ROE, ROIC, alavancagem, guidance, consenso, upside, downside, re-rating, de-rating, carry, NTN-B, DI futuro, premio de risco, multiplos, peer comparison. Inclua TODOS os numeros relevantes com precisao (percentuais com 1 casa decimal). Analise deve ser densa, com comparativos vs peers e benchmarks. Tom de relatorio de research institucional. Paragrafos podem ser mais longos e detalhados."
 };
-var TONE_MAP_SHORT = {"simples":"linguagem simples para leigos","intermediario":"linguagem acessivel com termos basicos","profissional":"linguagem tecnica profissional"};
+var TONE_MAP_SHORT = {
+  "simples":"linguagem simples de conversa informal, SEM termos tecnicos, frases curtas, como para alguem que nunca investiu",
+  "intermediario":"linguagem acessivel com termos basicos explicados, como para cliente com nocoes de investimento",
+  "profissional":"linguagem tecnica completa de research institucional, com todos os termos e numeros do mercado"
+};
 function getToneInstruction(tone, short) { return short ? (TONE_MAP_SHORT[tone]||TONE_MAP_SHORT["simples"]) : (TONE_MAP[tone]||TONE_MAP["simples"]); }
 
 function ToneSelector(p) {
@@ -1809,7 +1813,6 @@ function MeetingPrepModal(p) {
     setGenerating(true); setError(""); setGenProgress("Preparando...");
     var res = {macroShort:null, macroDetail:null, empresas:{}, talkPoints:null};
 
-    // Helper to extract text from API response content blocks
     function extractText(content) {
       var txt = "";
       for (var i = 0; i < (content||[]).length; i++) {
@@ -1817,114 +1820,89 @@ function MeetingPrepModal(p) {
       }
       return txt;
     }
-    // Helper to parse JSON from raw text
-    function parseJSON(raw) {
+    function safeParseJSON(raw) {
       raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
       var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
-      if (si < 0 || ei <= si) { si = raw.indexOf("["); ei = raw.lastIndexOf("]"); }
-      if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-      raw = raw.replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
-      return JSON.parse(raw);
+      if (si >= 0 && ei > si) {
+        try { return JSON.parse(raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]")); } catch(e) {}
+      }
+      si = raw.indexOf("["); ei = raw.lastIndexOf("]");
+      if (si >= 0 && ei > si) return JSON.parse(raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]"));
+      throw new Error("No JSON found");
+    }
+    async function callAPI(body) {
+      var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      if (!resp.ok) { var et = ""; try{et=await resp.text();}catch(x){} throw new Error("API " + resp.status + ": " + et.slice(0,150)); }
+      var d = await resp.json();
+      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      return d;
     }
 
+    var warnings = [];
     try {
-      // Build context
       var md = loadMacroData();
-      var macroText = (md.macroReports || []).slice(0,5).map(function(r){return "--- " + (r.title||"") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,2500);}).join("\n\n");
+      var macroReports = (md.macroReports || []).slice(0,5);
+      var macroText = macroReports.map(function(r){return "--- " + (r.title||"Relatorio") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,2500);}).join("\n\n");
+      var hasMacroCtx = macroText.trim().length > 50;
       var profileCtx = "Cliente: " + (selectedProfile.name||"") + ", " + (selectedProfile.age||"") + " anos, " + (selectedProfile.riskProfile||"") + ", horizonte " + (selectedProfile.horizon||"") + " anos. Objetivos: " + (selectedProfile.longTermGoals||"");
       var posCtx = "";
       if (selectedProfile.posAssets) {
         var posTotal = selectedProfile.posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
-        var topAssets = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,20);
-        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicao (top " + topAssets.length + "): " + topAssets.map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
+        var topA = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,15);
+        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicoes: " + topA.map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
       }
 
-      // ── MACRO (short + detail in one call) ──
       if (wantMacroShort || wantMacroDetail) {
-        setGenProgress("Gerando cenário macro...");
+        setGenProgress("Gerando cenario macro...");
         try {
-          var macroSys = 'Voce e um consultor preparando material para reuniao com cliente. Use os relatorios macro da Suno como fonte PRINCIPAL. Complemente com informacoes recentes via web search apenas se necessario.\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false);
-          var macroPrompt = "RELATORIOS MACRO SUNO:\n" + macroText.slice(0,10000) + "\n\nGere JSON: {";
-          if (wantMacroShort) macroPrompt += '"macroShort":"3-4 bullets curtos dos pontos mais relevantes do cenario macro atual (Selic, inflacao, cambio, bolsa). Maximo 4 linhas."';
-          if (wantMacroShort && wantMacroDetail) macroPrompt += ",";
-          if (wantMacroDetail) macroPrompt += '"macroDetail":"3 paragrafos detalhados sobre o cenario macro: economia brasileira, cenario global, perspectivas. Baseado nos relatorios Suno."';
-          macroPrompt += "} JSON puro sem markdown.";
-
-          var macroResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:macroSys,messages:[{role:"user",content:macroPrompt}]})});
-          if (macroResp.ok) {
-            var macroD = await macroResp.json();
-            var macroRaw = extractText(macroD.content);
-            if (macroRaw) {
-              var macroParsed = parseJSON(macroRaw);
-              res.macroShort = cleanCitations(macroParsed.macroShort) || null;
-              res.macroDetail = cleanCitations(macroParsed.macroDetail) || null;
-            }
-          }
-        } catch(macErr) { console.error('Macro error:', macErr); }
+          var mUserMsg = hasMacroCtx
+            ? "Com base nestes relatorios macro da Suno:\n\n" + macroText.slice(0,8000)
+            : "Nao ha relatorios macro salvos. Gere cenario macro generico do Brasil atual (Selic, inflacao, cambio, bolsa).";
+          var mFields = [];
+          if (wantMacroShort) mFields.push('"macroShort": "3-4 bullets curtos sobre Selic, inflacao, cambio, bolsa"');
+          if (wantMacroDetail) mFields.push('"macroDetail": "3 paragrafos detalhados sobre economia BR, cenario global, perspectivas"');
+          mUserMsg += "\n\nResponda SOMENTE com JSON puro sem markdown:\n{" + mFields.join(", ") + "}";
+          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:4096,system:"Voce e um consultor preparando material macro para reuniao.\n\n" + getToneInstruction(writingTone, false),messages:[{role:"user",content:mUserMsg}]});
+          var mRaw = extractText(mD.content);
+          if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(mP.macroShort)||null; res.macroDetail = cleanCitations(mP.macroDetail)||null; }
+        } catch(me) { console.error("Macro err:", me); warnings.push("macro"); }
       }
 
-      // ── EMPRESAS ──
       if (wantEmpresas) {
-        var empTickers = Object.keys(selectedEmpresas);
-        if (empTickers.length > 0) {
-          var empBatchSize = 6;
-          for (var eb = 0; eb < empTickers.length; eb += empBatchSize) {
-            var empBatch = empTickers.slice(eb, eb + empBatchSize);
-            setGenProgress("Analisando " + empBatch.join(", ") + "...");
-            
-            var empCtx = empBatch.map(function(tk) {
+        var eTickers = Object.keys(selectedEmpresas);
+        if (eTickers.length > 0) {
+          for (var eb = 0; eb < eTickers.length; eb += 5) {
+            var eBatch = eTickers.slice(eb, eb + 5);
+            setGenProgress("Analisando " + eBatch.join(", ") + "...");
+            var eCtx = eBatch.map(function(tk) {
               var app = allAppStocks.find(function(s){return s.ticker===tk;});
               var cart = null;
               (carteirasData.carteiras||[]).forEach(function(ca){(carteirasData.ativos[ca.id]||[]).forEach(function(a){if(a.ticker===tk)cart=a;});});
-              return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart ? {rank:cart.rank, precoTeto:cart.precoTeto, vies:cart.vies} : null};
+              return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart};
             });
-
-            var empSys = 'Para cada empresa, gere um resumo para briefing de reuniao usando os dados fornecidos (resultado trimestral, visao Suno, ranking, preco-teto).\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false) + '\n\nGere JSON puro: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao dos analistas, situacao atual. Neutro e factual. Sem tags HTML."}]';
             try {
-              var empResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:empSys,messages:[{role:"user",content:"EMPRESAS:\n"+JSON.stringify(empCtx)}]})});
-              if (empResp.ok) {
-                var empD = await empResp.json();
-                var empRaw = extractText(empD.content);
-                if (empRaw) {
-                  var empParsed = parseJSON(empRaw);
-                  if (Array.isArray(empParsed)) { empParsed.forEach(function(e){e.summary=cleanCitations(e.summary);res.empresas[e.ticker]=e;}); }
-                }
-              }
-            } catch(empErr) { console.error("Empresas batch error:", empErr); }
+              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:"Gere resumo de 1 paragrafo por empresa para briefing. Sem HTML.\n\n" + getToneInstruction(writingTone, false) + "\n\nJSON puro: [{\"ticker\":\"\",\"summary\":\"\"}]",messages:[{role:"user",content:"Empresas:\n"+JSON.stringify(eCtx)}]});
+              var eRaw = extractText(eD.content);
+              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){e.summary=cleanCitations(e.summary||"");res.empresas[e.ticker]=e;}); }
+            } catch(ee) { console.error("Emp err:", ee); warnings.push("empresas"); }
           }
         }
       }
 
-      // ── TALKING POINTS ──
       if (wantTalkPoints) {
         setGenProgress("Gerando talking points...");
         try {
-          var tpSys = 'Gere TALKING POINTS para uma reuniao de consultoria de investimentos. Personalize para ESTE cliente. Use dados da Suno.\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false);
-          var tpMsg = profileCtx + "\n" + posCtx + "\nEmpresas analisadas: " + Object.keys(res.empresas).join(", ") + "\nFoco da reuniao: " + (meetingFocus || "acompanhamento trimestral");
-          if (res.macroShort) tpMsg += "\nMacro: " + res.macroShort;
-          tpMsg += '\n\nGere JSON: {"talkPoints":"5-7 bullets de pontos de conversa personalizados para este cliente. Inclua: situacao da carteira vs plano, oportunidades, riscos, proximos passos. Cada bullet em uma linha separada com - no inicio."} JSON puro.';
-
-          var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
-          if (tpResp.ok) {
-            var tpD = await tpResp.json();
-            var tpRaw = extractText(tpD.content);
-            if (tpRaw) {
-              var tpParsed = parseJSON(tpRaw);
-              res.talkPoints = cleanCitations(tpParsed.talkPoints) || null;
-            }
-          }
-        } catch(tpErr) { console.error("TalkPoints error:", tpErr); }
+          var tMsg = profileCtx + "\n" + posCtx + "\nEmpresas: " + Object.keys(res.empresas).join(", ") + "\nFoco: " + (meetingFocus || "trimestral");
+          if (res.macroShort) tMsg += "\nMacro: " + res.macroShort;
+          tMsg += "\n\nGere 5-7 pontos de conversa. JSON puro: {\"talkPoints\":\"- ponto 1\\n- ponto 2\"}";
+          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Gere talking points para reuniao de investimentos.\n\n" + getToneInstruction(writingTone, false),messages:[{role:"user",content:tMsg}]});
+          var tRaw = extractText(tD.content);
+          if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(tP.talkPoints)||null; }
+        } catch(te) { console.error("TP err:", te); warnings.push("talking points"); }
       }
 
       setResults(res);
-
-      // Show warning if some sections failed
-      var warnings = [];
-      if ((wantMacroShort && !res.macroShort) || (wantMacroDetail && !res.macroDetail)) warnings.push("macro");
-      if (wantEmpresas && Object.keys(selectedEmpresas).length > 0 && Object.keys(res.empresas).length === 0) warnings.push("empresas");
-      if (wantTalkPoints && !res.talkPoints) warnings.push("talking points");
-      if (warnings.length > 0) setError("Aviso: falha parcial em " + warnings.join(", ") + ". Você pode clicar 'Refazer' para tentar novamente.");
-
+      if (warnings.length > 0) setError("Aviso: falha em " + warnings.join(", ") + ". Clique Refazer.");
     } catch(err) { console.error(err); setError("Erro: " + err.message); }
     setGenerating(false); setGenProgress("");
   }
