@@ -1776,12 +1776,13 @@ function ConsultiveReportModal(p) {
         + ' {"clientInfo":{"name":"","age":0,"profession":"","riskProfile":"","patrimony":0,"monthlyIncome":0,"monthlyExpenses":0,"monthlyContribution":0,"horizon":"","objective":"","desiredIncome":0,"liquidityNeed":""},'
         + '"projections":{"retirementAge":0,"capitalAtRetirement":0,"percentMeta":0,"realReturnRate":"","estimatedCurrentIncome":0,"estimatedRetirementIncome":0,"requiredContribution":0,"ageForMeta":"","evolutionTable":[{"date":"","patrimony":0,"percentMeta":0,"age":0}]},'
         + '"allocationMacro":{"classes":[{"name":"","currentPercent":0,"suggestedPercent":0,"currentValue":0,"suggestedValue":0}],"availableCash":0},'
+        + '"allocationDetail":[{"class":"Renda Fixa","subclass":"Pós-fixado","percentOfClass":48,"percentOfTotal":0},{"class":"Renda Fixa","subclass":"Inflação","percentOfClass":41,"percentOfTotal":0},{"class":"Renda Fixa","subclass":"Pré-fixado","percentOfClass":10,"percentOfTotal":0}],'
         + '"currentPortfolio":[{"ticker":"","name":"","class":"","subclass":"","value":0,"percentPortfolio":0}],'
         + '"suggestedPortfolio":[{"ticker":"","name":"","class":"","subclass":"","value":0,"percentPortfolio":0,"yieldEstimate":0}],'
         + '"movements":{"sells":[{"ticker":"","value":0,"qty":0}],"buys":[{"ticker":"","value":0,"qty":0}]},'
         + '"assetRationales":[{"ticker":"","class":"","sector":"","currentPrice":0,"ceilingPrice":0,"deltaCeiling":0,"rationale":""}],'
         + '"feeFix":{"value":0,"percent":"","asset":""}}'
-        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes. 2) Valores monetarios sem R$, numero puro. 3) Percentuais como numeros. 4) Se campo nao existe, use null. 5) JSON puro sem markdown.';
+        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes. 2) Valores monetarios sem R$, numero puro. 3) Percentuais como numeros. 4) Se campo nao existe, use null. 5) JSON puro sem markdown. 6) Em allocationDetail, extraia a distribuicao DENTRO de cada classe (ex: dentro de Renda Fixa: Pos-fixado 48%, Inflacao 41%, Pre-fixado 10%). percentOfClass = % dentro da classe. Procure paginas como "Carteira Sugerida - Renda Fixa" que mostram essa abertura por indexador.';
 
       var resp = await fetch("/api/anthropic", {
         method: "POST", headers: {"Content-Type":"application/json"},
@@ -2676,40 +2677,25 @@ function ConsultiveReportModal(p) {
                     var pct = ac.suggestedPercent || 0;
                     
                     if (name === "Renda Fixa" || name.indexOf("Renda Fixa") >= 0) {
-                      // Calculate RF subclass metas using JB asset VALUES / total portfolio value
-                      var allJbAssets = (jbd && jbd.suggestedPortfolio) || [];
-                      var totalPortfolioValue = allJbAssets.reduce(function(s,a){return s+(a.value||0);},0);
-                      
-                      var rfAssets = allJbAssets.filter(function(a) {
+                      // Sum percentPortfolio from JB suggestedPortfolio RF assets by subclass
+                      var rfAssets = ((jbd && jbd.suggestedPortfolio) || []).filter(function(a) {
                         var cl = (a.class||"").toLowerCase();
-                        return cl.indexOf("renda fixa") >= 0 || cl.indexOf("rf") >= 0 || cl.indexOf("fix") >= 0 || cl.indexOf("crédito") >= 0 || cl.indexOf("credito") >= 0;
+                        return cl.indexOf("renda fixa") >= 0 || cl.indexOf("rf") >= 0 || cl.indexOf("crédito") >= 0;
                       });
-                      
-                      if (rfAssets.length > 0 && totalPortfolioValue > 0) {
-                        var posVal=0, ipcaVal=0, preVal=0, cashVal=0;
-                        
+                      if (rfAssets.length > 0) {
+                        var subMap = {"Pós-fixado":"Pós-fixado","Pos-fixado":"Pós-fixado","Inflação":"IPCA+","Inflacao":"IPCA+","IPCA+":"IPCA+","Pré-fixado":"Pré-fixado","Pre-fixado":"Pré-fixado","Caixa":"Cash","Cash":"Cash"};
                         rfAssets.forEach(function(a) {
-                          var subCl = (a.subclass||a.name||"").toLowerCase();
-                          var tk = (a.ticker||a.name||"").toUpperCase();
-                          var val = a.value || 0;
-                          
-                          if (subCl.indexOf("caixa") >= 0 || tk.indexOf("CAIXA") >= 0) cashVal += val;
-                          else if (/ipca|inflac|ntn.?b|tesouro ipca/i.test(tk) || /ipca|inflac/i.test(subCl)) ipcaVal += val;
-                          else if (/pre.?fix|prefixad|ltn|tesouro pre/i.test(tk) || /pre.?fix/i.test(subCl)) preVal += val;
-                          else posVal += val;
+                          var sc = a.subclass || "";
+                          var mapped = subMap[sc];
+                          if (!mapped) {
+                            var tk = (a.ticker||a.name||"").toUpperCase();
+                            if (/IPCA|INFLAC|NTN.?B/i.test(tk)) mapped = "IPCA+";
+                            else if (/PRE.?FIX|PREFIXAD|LTN/i.test(tk)) mapped = "Pré-fixado";
+                            else if (/CAIXA/i.test(tk)) mapped = "Cash";
+                            else mapped = "Pós-fixado";
+                          }
+                          if (subclassData[mapped]) subclassData[mapped].jb += (a.percentPortfolio || 0);
                         });
-                        
-                        // Meta = proporção interna do indexador × % total da classe RF
-                        // Ex: 48% pós × 63% RF total = 30.2% do patrimônio
-                        var rfTotal = cashVal + posVal + ipcaVal + preVal;
-                        if (rfTotal > 0) {
-                          subclassData["Cash"].jb = (cashVal / rfTotal) * pct;
-                          subclassData["Pós-fixado"].jb = (posVal / rfTotal) * pct;
-                          subclassData["IPCA+"].jb = (ipcaVal / rfTotal) * pct;
-                          subclassData["Pré-fixado"].jb = (preVal / rfTotal) * pct;
-                        } else {
-                          subclassData["Pós-fixado"].jb = pct;
-                        }
                       } else {
                         subclassData["Pós-fixado"].jb = pct;
                       }
