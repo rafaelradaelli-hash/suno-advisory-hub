@@ -1009,8 +1009,8 @@ function ClientProfilesModal(p) {
 }
 
 /* ─── Consultive Report Module v2 — Tripod Architecture ─── */
-var CONSULT_STEPS = ["profile","journey","crossref","generate","review","pdf"];
-var STEP_LABELS = {profile:"1. Cliente",journey:"2. Journey Book",crossref:"3. Cruzamento",generate:"4. Análise IA",review:"5. Revisar",pdf:"6. PDF"};
+var CONSULT_STEPS = ["profile","journey","position","crossref","generate","review","pdf"];
+var STEP_LABELS = {profile:"1. Cliente",journey:"2. Journey Book",position:"3. Posição Atual",crossref:"4. Cruzamento",generate:"5. Análise IA",review:"6. Revisar",pdf:"7. PDF"};
 
 function ConsultiveReportModal(p) {
   var [step, setStep] = useState("profile");
@@ -1033,6 +1033,13 @@ function ConsultiveReportModal(p) {
   // Pilar 1+2+3 — Crossref
   var [crossrefData, setCrossrefData] = useState(null);
   var [selectedAssets, setSelectedAssets] = useState({});
+
+  // Position — Current portfolio
+  var [posFile, setPosFile] = useState(null);
+  var [posFileName, setPosFileName] = useState("");
+  var [posAssets, setPosAssets] = useState([]);
+  var [availableCash, setAvailableCash] = useState("");
+  var posFileRef = useRef(null);
 
   // Generation
   var [generating, setGenerating] = useState(false);
@@ -1197,6 +1204,53 @@ function ConsultiveReportModal(p) {
     setJbParsing(false);
   }
 
+  // ── Position — Current portfolio upload ──
+  async function handlePosUpload(e) {
+    var f = e.target.files[0]; if (!f) return;
+    setPosFileName(f.name); setPosFile(f); setError("");
+    try {
+      var arrayBuf = await new Promise(function(res, rej) {
+        var r = new FileReader(); r.onload = function(){res(r.result);}; r.onerror = function(){rej(new Error("Erro"));}; r.readAsArrayBuffer(f);
+      });
+      var wb = XLSX.read(arrayBuf, {type:"array"});
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var raw = XLSX.utils.sheet_to_json(ws, {defval:""});
+      if (raw.length === 0) { setError("Planilha vazia"); return; }
+      var cols = Object.keys(raw[0]);
+      function findCol(patterns) {
+        for (var ci = 0; ci < cols.length; ci++) {
+          var cl = cols[ci].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+          for (var pi = 0; pi < patterns.length; pi++) { if (cl.indexOf(patterns[pi]) >= 0) return cols[ci]; }
+        }
+        return null;
+      }
+      var tickerCol = findCol(["ativo","ticker","codigo","papel","symbol"]) || cols[0];
+      var nameCol = findCol(["nome","name","empresa","descri"]);
+      var qtyCol = findCol(["qtd","quantidade","quantity","shares"]);
+      var avgPriceCol = findCol(["preco medio","preco_medio","avg","medio","custo"]);
+      var currentPriceCol = findCol(["preco atual","preco_atual","cotacao","current","ultimo"]);
+      var totalCol = findCol(["total atual","valor atual","total_atual","saldo","valor","financeiro"]);
+      var typeCol = findCol(["tipo","type","classe","categoria","asset"]);
+
+      var assets = [];
+      for (var ri = 0; ri < raw.length; ri++) {
+        var row = raw[ri];
+        var tk = String(row[tickerCol] || "").trim().toUpperCase();
+        if (!tk || tk === "TOTAL" || tk === "SUBTOTAL" || tk.length < 2) continue;
+        assets.push({
+          ticker: tk,
+          name: nameCol ? String(row[nameCol] || "") : "",
+          qty: qtyCol ? parseFloat(String(row[qtyCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
+          avgPrice: avgPriceCol ? parseFloat(String(row[avgPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
+          currentPrice: currentPriceCol ? parseFloat(String(row[currentPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
+          totalValue: totalCol ? parseFloat(String(row[totalCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
+          type: typeCol ? String(row[typeCol] || "") : ""
+        });
+      }
+      setPosAssets(assets);
+    } catch(err) { setError("Erro ao ler Excel: " + err.message); }
+  }
+
   // ── Crossref ──
   function buildCrossref() {
     if (!jbData) return;
@@ -1215,7 +1269,7 @@ function ConsultiveReportModal(p) {
       for (var j = 0; j < rationales.length; j++) {
         if (rationales[j].ticker === asset.ticker) { rat = rationales[j]; break; }
       }
-      // Find movement
+      // Find movement from JB
       var buyMove = null; var sellMove = null;
       for (var bi = 0; bi < movements.buys.length; bi++) {
         if (movements.buys[bi].ticker === asset.ticker) { buyMove = movements.buys[bi]; break; }
@@ -1223,23 +1277,33 @@ function ConsultiveReportModal(p) {
       for (var si = 0; si < movements.sells.length; si++) {
         if (movements.sells[si].ticker === asset.ticker) { sellMove = movements.sells[si]; break; }
       }
+      // Find in current position (Posição Atual)
+      var posMatch = null;
+      for (var pi = 0; pi < posAssets.length; pi++) {
+        if (posAssets[pi].ticker === asset.ticker) { posMatch = posAssets[pi]; break; }
+      }
 
       return {
         ticker: asset.ticker,
-        name: asset.name || (appMatch ? appMatch.name : ""),
+        name: asset.name || (posMatch ? posMatch.name : "") || (appMatch ? appMatch.name : ""),
         class: asset.class || "",
         subclass: asset.subclass || "",
         suggestedValue: asset.value || 0,
         suggestedPercent: asset.percentPortfolio || 0,
         yieldEstimate: asset.yieldEstimate || 0,
         // JB rationale (Pilar 2)
-        currentPrice: rat ? rat.currentPrice : null,
+        currentPrice: rat ? rat.currentPrice : (posMatch ? posMatch.currentPrice : null),
         ceilingPrice: rat ? rat.ceilingPrice : null,
         deltaCeiling: rat ? rat.deltaCeiling : null,
         rationale: rat ? rat.rationale : null,
-        // Movement
+        // Movement from JB
         buyValue: buyMove ? buyMove.value : 0,
         sellValue: sellMove ? sellMove.value : 0,
+        // Current position
+        currentQty: posMatch ? posMatch.qty : 0,
+        currentAvgPrice: posMatch ? posMatch.avgPrice : 0,
+        currentTotalValue: posMatch ? posMatch.totalValue : 0,
+        hasPosition: !!posMatch,
         // App data (Pilar 1)
         appMatch: appMatch ? {
           thesis: appMatch.thesis,
@@ -1260,7 +1324,6 @@ function ConsultiveReportModal(p) {
     });
 
     setCrossrefData(crossref);
-    // Auto-select all
     var sel = {};
     crossref.forEach(function(c) { sel[c.ticker] = true; });
     setSelectedAssets(sel);
@@ -1314,7 +1377,20 @@ function ConsultiveReportModal(p) {
       jbData.allocationMacro.classes.forEach(function(c) {
         parts.push("  " + c.name + ": atual=" + c.currentPercent + "% → sugerido=" + c.suggestedPercent + "% (R$ " + (c.suggestedValue||0).toLocaleString("pt-BR") + ")");
       });
-      if (jbData.allocationMacro.availableCash) parts.push("  Caixa disponivel para movimentar: R$ " + jbData.allocationMacro.availableCash.toLocaleString("pt-BR"));
+      if (jbData.allocationMacro.availableCash) parts.push("  Caixa disponivel JB: R$ " + jbData.allocationMacro.availableCash.toLocaleString("pt-BR"));
+    }
+    // Current position summary
+    if (posAssets.length > 0 || availableCash) {
+      parts.push("\nPOSICAO ATUAL DO CLIENTE (atualizada):");
+      if (availableCash) parts.push("Caixa disponivel ATUAL: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
+      var totalPos = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+      if (totalPos > 0) parts.push("Patrimonio em ativos (posicao atual): R$ " + totalPos.toLocaleString("pt-BR"));
+      if (posAssets.length > 0) {
+        parts.push("Ativos em carteira hoje:");
+        posAssets.forEach(function(a) {
+          parts.push("  " + a.ticker + ": Qtd=" + a.qty + ", PM=R$" + (a.avgPrice||0).toFixed(2) + ", Total=R$" + (a.totalValue||0).toLocaleString("pt-BR"));
+        });
+      }
     }
     return parts.join("\n");
   }
@@ -1336,8 +1412,12 @@ function ConsultiveReportModal(p) {
           suggestedValue: c.suggestedValue, suggestedPercent: c.suggestedPercent,
           currentPrice: c.currentPrice, ceilingPrice: c.ceilingPrice, deltaCeiling: c.deltaCeiling,
           jbRationale: c.rationale,
-          buyValue: c.buyValue, sellValue: c.sellValue,
-          yieldEstimate: c.yieldEstimate
+          yieldEstimate: c.yieldEstimate,
+          // Current position
+          currentQty: c.currentQty || 0,
+          currentAvgPrice: c.currentAvgPrice || 0,
+          currentTotalValue: c.currentTotalValue || 0,
+          hasPosition: c.hasPosition || false
         };
         if (c.appMatch) {
           ctx.appData = {
@@ -1364,14 +1444,14 @@ function ConsultiveReportModal(p) {
         var sys = 'Voce e um consultor de investimentos senior da Suno Consultoria, especialista em renda fixa, acoes brasileiras, fundos imobiliarios e investimentos internacionais.'
           + ' Voce recebera 3 pilares de informacao para gerar recomendacoes PERSONALIZADAS e FUNDAMENTADAS:'
           + ' PILAR 1 (Inteligencia Suno): teses de investimento, ultimos resultados trimestrais com nota, sentimento e visao da Suno para cada ativo — campo "appData" de cada ativo.'
-          + ' PILAR 2 (Journey Book): estrategia definida entre cliente e consultor, incluindo alocacao-alvo por classe, carteira sugerida com valores por ativo, precos-teto, racional de cada ativo, movimentacoes planejadas e projecoes de patrimonio.'
+          + ' PILAR 2 (Journey Book): estrategia NORTEADORA definida entre cliente e consultor. Inclui alocacao-alvo por classe, ativos recomendados com precos-teto e racionais fundamentalistas. IMPORTANTE: As movimentacoes previstas no JB sao apenas indicativas e NAO devem ser usadas como recomendacao direta. Voce deve criar sua PROPRIA recomendacao com base no caixa disponivel REAL do cliente, na estrategia do JB, nos resultados mais recentes dos ativos e no perfil do cliente.'
           + ' PILAR 3 (Perfil do Investidor): dados pessoais, financeiros, perfil de risco, horizonte, objetivos de longo prazo e estrategia.'
           + ' Com base nos 3 pilares, para CADA ativo gere:'
           + ' 1) "overview": 2-3 frases contextualizando o ativo na carteira deste cliente especifico. Mencione se esta na carteira atual ou e entrada nova, valor sugerido, % da carteira, e como se encaixa no perfil/estrategia.'
           + ' 2) "fundamentals": 2-3 frases sobre o momento atual do ativo. Se tem dados do Inteligência Suno (appData), use a nota, sentimento e ultimos resultados. Se nao, use o racional do Journey Book.'
           + ' 3) "opportunities": 2-4 oportunidades CONCRETAS considerando preco-teto, momento do ativo, e perfil do cliente.'
           + ' 4) "risks": 2-4 riscos ESPECIFICOS adaptados ao perfil e horizonte do cliente.'
-          + ' 5) "recommendation": Recomendacao objetiva e acionavel. Compare preco atual vs teto. Considere a alocacao-alvo. Indique se deve aportar agora, aguardar, ou reduzir. Seja direto e use numeros.'
+          + ' 5) "recommendation": Recomendacao objetiva e ACIONAVEL baseada no CAIXA DISPONIVEL REAL do cliente. Compare preco atual vs teto. Considere a alocacao-alvo do JB como norte. Sugira VALORES CONCRETOS de aporte com base no caixa disponivel informado, distribuindo de forma inteligente entre os ativos prioritarios. NAO repita as movimentacoes do Journey Book — crie sua propria recomendacao. Seja direto e use numeros.'
           + ' 6) "verdict": "APORTAR", "MANTER", "REDUZIR", "AGUARDAR" ou "NOVO" (se e entrada nova na carteira)'
           + ' 7) "priority": 1 a 5 (1=urgente/oportunidade clara, 5=baixa prioridade). Considere delta preco-teto, nota do resultado e aderencia a estrategia.'
           + ' Use dados concretos. Seja profissional e direto. Personalize para ESTE cliente.'
@@ -1406,7 +1486,7 @@ function ConsultiveReportModal(p) {
       });
 
       var stratSys = 'Voce e um consultor senior da Suno Consultoria. Com base no TRIPE completo (perfil do cliente + Journey Book + analises individuais), escreva uma SECAO ESTRATEGICA CONSOLIDADA.'
-        + ' Inclua: 1) Visao geral da carteira e adequacao ao perfil do cliente (perfil de risco, horizonte, objetivos). 2) Aderencia a estrategia do Journey Book — a carteira esta convergindo para as metas? Quais classes precisam de ajuste? 3) Destaques positivos e pontos de atencao baseados nos resultados mais recentes dos ativos. 4) Prioridades de movimentacao para o proximo trimestre (quais aportes fazer primeiro, baseado em preco-teto e prioridade). 5) Projecao de impacto: como as movimentacoes sugeridas aproximam o cliente da meta de longo prazo.'
+        + ' Inclua: 1) Visao geral da carteira e adequacao ao perfil do cliente (perfil de risco, horizonte, objetivos). 2) Aderencia a estrategia do Journey Book — a carteira esta convergindo para as metas de alocacao? Quais classes precisam de ajuste? 3) Destaques positivos e pontos de atencao baseados nos resultados mais recentes dos ativos. 4) PLANO DE APORTES CONCRETO: com base no caixa disponivel REAL do cliente, sugira como distribuir os aportes entre os ativos, priorizando por preco-teto, nota do resultado e aderencia a estrategia. Use valores em reais. 5) Projecao de impacto: como os aportes sugeridos aproximam o cliente da meta de longo prazo.'
         + ' Escreva em 4-6 paragrafos. Profissional, direto, personalizado. Use numeros concretos. Sem markdown.';
 
       var stratMsg = profileCtx + "\n\n" + journeyCtx + "\n\nANALISES:\n" + JSON.stringify(stratCtx, null, 0);
@@ -1606,13 +1686,64 @@ function ConsultiveReportModal(p) {
                   <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).filter(function(r){return r.ceilingPrice;}).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com preço-teto</div></div>
                 </div>
               </div>
-              <button onClick={buildCrossref} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Prosseguir → Cruzamento Tripé</button>
+              <div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(251,191,36,0.15)",marginBottom:"12px"}}>
+                <label style={{fontSize:"10px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px",display:"block"}}>Caixa disponível para aplicação (R$)</label>
+                <input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} placeholder={jbData.allocationMacro&&jbData.allocationMacro.availableCash?"JB indica R$ "+jbData.allocationMacro.availableCash.toLocaleString("pt-BR")+" — informe o valor REAL":"Ex: 80000"} type="number" style={Object.assign({},iS,{border:"1px solid rgba(251,191,36,0.2)",fontSize:"14px",fontWeight:700,color:"#fbbf24"})}/>
+                <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",marginTop:"4px"}}>Informe o valor real disponível hoje para a IA recomendar aportes concretos. Não use o valor do JB se já houve movimentações.</div>
+              </div>
+              <button onClick={function(){setStep("position");}} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Prosseguir → Posição Atual</button>
             </div>)}
 
             <button onClick={function(){setStep("profile");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)",marginTop:"8px"})}>&#8592; Voltar</button>
           </div>)}
 
-          {/* STEP 3: Crossref */}
+          {/* STEP 3: Position */}
+          {step==="position"&&(<div>
+            <div style={{marginBottom:"14px"}}>
+              <label style={lS}>Importar posição atual do cliente (Excel)</label>
+              <div style={{border:"2px dashed rgba(96,165,250,0.2)",borderRadius:"10px",padding:"20px",textAlign:"center",cursor:"pointer",background:"rgba(96,165,250,0.02)"}} onClick={function(){posFileRef.current&&posFileRef.current.click();}}>
+                <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
+                {posFileName?(<div><div style={{fontSize:"13px",fontWeight:700,color:"#60a5fa"}}>{posFileName}</div><div style={{fontSize:"11px",color:"#4ade80",marginTop:"4px"}}>{posAssets.length} ativos detectados</div></div>):(<div><div style={{fontSize:"20px",marginBottom:"4px"}}>📊</div><div style={{fontSize:"12px",color:"rgba(255,255,255,0.4)"}}>Excel com posição detalhada atual (.xlsx, .csv)</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.2)",marginTop:"2px"}}>Relatório de Posição Detalhada do BTG, XP, Rico, etc.</div></div>)}
+              </div>
+            </div>
+
+            {posAssets.length > 0 && (
+              <div style={{maxHeight:"160px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"4px",marginBottom:"10px"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"10px"}}>
+                  <thead><tr style={{borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+                    <th style={{textAlign:"left",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Ticker</th>
+                    <th style={{textAlign:"left",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Nome</th>
+                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Qtd</th>
+                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>PM</th>
+                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Total</th>
+                  </tr></thead>
+                  <tbody>{posAssets.slice(0,30).map(function(a,i){
+                    return <tr key={i} style={{borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
+                      <td style={{padding:"3px 6px",color:"#f1f5f9",fontWeight:700}}>{a.ticker}</td>
+                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)"}}>{a.name}</td>
+                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.qty||""}</td>
+                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.avgPrice?a.avgPrice.toFixed(2):""}</td>
+                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.totalValue?a.totalValue.toLocaleString("pt-BR",{minimumFractionDigits:2}):""}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+                {posAssets.length>30&&<div style={{textAlign:"center",padding:"4px",fontSize:"9px",color:"rgba(255,255,255,0.2)"}}>+ {posAssets.length-30} ativos...</div>}
+              </div>
+            )}
+
+            <div style={{marginBottom:"14px"}}>
+              <label style={lS}>Caixa disponível para movimentação (R$)</label>
+              <input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} placeholder="Ex: 150000" type="number" style={iS}/>
+              <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",marginTop:"4px"}}>Valor em caixa que pode ser alocado agora. Se não souber, deixe em branco.</div>
+            </div>
+
+            <div style={{display:"flex",gap:"8px"}}>
+              <button onClick={function(){setStep("journey");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592; Voltar</button>
+              <button onClick={buildCrossref} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir → Cruzamento Tripé</button>
+            </div>
+          </div>)}
+
+          {/* STEP 4: Crossref */}
           {step==="crossref"&&crossrefData&&(<div>
             <div style={{marginBottom:"8px",fontSize:"12px",fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{matchCount} de {crossrefData.length} ativos com dados no Inteligência Suno (Pilar 1)</div>
             <div style={{maxHeight:"350px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"4px",marginBottom:"14px"}}>
@@ -1638,7 +1769,7 @@ function ConsultiveReportModal(p) {
               })}
             </div>
             <div style={{display:"flex",gap:"8px"}}>
-              <button onClick={function(){setStep("journey");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
+              <button onClick={function(){setStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
               <button onClick={function(){setStep("generate");}} disabled={selCount===0} style={Object.assign({},btnBase,{flex:1,background:selCount>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCount>0?"#fff":"rgba(255,255,255,0.3)"})}>Gerar Análise IA ({selCount} ativos) →</button>
             </div>
           </div>)}
