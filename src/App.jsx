@@ -1329,6 +1329,307 @@ function MacroModal(p) {
   );
 }
 
+/* ─── Carteiras Suno Module ─── */
+var DEFAULT_CARTEIRAS = [
+  {id:"div",name:"Dividendos",intl:false},
+  {id:"val",name:"Valor",intl:false},
+  {id:"sc",name:"Small Caps",intl:false},
+  {id:"di",name:"Dollar Income",intl:true},
+  {id:"hv",name:"Hidden Value",intl:true},
+  {id:"gc",name:"Great Companies",intl:true}
+];
+
+function loadCarteiras() {
+  try { var s = localStorage.getItem("tt-carteiras-suno"); if (s) return JSON.parse(s); } catch(e) {}
+  return { carteiras: DEFAULT_CARTEIRAS, ativos: {} };
+}
+function saveCarteiras(d) { try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(d)); } catch(e) {} }
+
+function CarteirasModal(p) {
+  var [cData, setCData] = useState(function(){ return loadCarteiras(); });
+  var [selCart, setSelCart] = useState(null);
+  var [addingCart, setAddingCart] = useState(false);
+  var [editCartId, setEditCartId] = useState(null);
+  var [cartName, setCartName] = useState("");
+  var [cartIntl, setCartIntl] = useState(false);
+  var [addingAtivo, setAddingAtivo] = useState(false);
+  var [editAtivoIdx, setEditAtivoIdx] = useState(null);
+  var [aForm, setAForm] = useState({ticker:"",name:"",rank:"",precoTeto:"",aloc:"",vies:"Comprar"});
+  var [importing, setImporting] = useState(false);
+  var importRef = useRef(null);
+
+  function save(u) { setCData(u); saveCarteiras(u); }
+
+  function saveCarteira() {
+    if (!cartName.trim()) return;
+    var u = Object.assign({}, cData);
+    var carts = (u.carteiras||[]).slice();
+    if (editCartId) {
+      carts = carts.map(function(c){ return c.id===editCartId ? Object.assign({},c,{name:cartName.trim(),intl:cartIntl}) : c; });
+    } else {
+      var newId = Date.now().toString(36) + Math.random().toString(36).slice(2,5);
+      carts.push({id:newId, name:cartName.trim(), intl:cartIntl});
+    }
+    u.carteiras = carts;
+    save(u);
+    setAddingCart(false); setEditCartId(null); setCartName(""); setCartIntl(false);
+  }
+  function startEditCart(c) { setEditCartId(c.id); setCartName(c.name); setCartIntl(c.intl); setAddingCart(true); }
+  function deleteCarteira(id) {
+    if (!confirm("Excluir esta carteira e todos os seus ativos?")) return;
+    var u = Object.assign({}, cData);
+    u.carteiras = (u.carteiras||[]).filter(function(c){return c.id!==id;});
+    var ativos = Object.assign({}, u.ativos||{});
+    delete ativos[id];
+    u.ativos = ativos;
+    save(u);
+    if (selCart === id) setSelCart(null);
+  }
+  function cancelCart() { setAddingCart(false); setEditCartId(null); setCartName(""); setCartIntl(false); }
+
+  function getCartAtivos(cartId) { return (cData.ativos||{})[cartId] || []; }
+
+  function startAddAtivo() { setAddingAtivo(true); setEditAtivoIdx(null); setAForm({ticker:"",name:"",rank:"",precoTeto:"",aloc:"",vies:"Comprar"}); }
+  function startEditAtivo(idx) {
+    var a = getCartAtivos(selCart)[idx];
+    if (!a) return;
+    setEditAtivoIdx(idx); setAddingAtivo(true);
+    setAForm({ticker:a.ticker||"",name:a.name||"",rank:a.rank!==undefined?String(a.rank):"",precoTeto:a.precoTeto!==undefined?String(a.precoTeto):"",aloc:a.aloc!==undefined?String(a.aloc):"",vies:a.vies||"Comprar"});
+  }
+  function saveAtivo() {
+    if (!aForm.ticker.trim()) return;
+    var u = Object.assign({}, cData);
+    var ativos = Object.assign({}, u.ativos||{});
+    var list = (ativos[selCart]||[]).slice();
+    var selCartObj = (u.carteiras||[]).find(function(c){return c.id===selCart;});
+    var isIntl = selCartObj ? selCartObj.intl : false;
+    var entry = {
+      ticker: aForm.ticker.trim().toUpperCase(),
+      name: aForm.name.trim(),
+      rank: aForm.rank ? parseInt(aForm.rank) : null,
+      precoTeto: aForm.precoTeto ? parseFloat(aForm.precoTeto) : null,
+      aloc: isIntl ? null : (aForm.aloc ? parseFloat(aForm.aloc) : null),
+      vies: aForm.vies || "Comprar"
+    };
+    if (editAtivoIdx !== null) { list[editAtivoIdx] = entry; }
+    else { list.push(entry); }
+    list.sort(function(a,b){ return (a.rank||999)-(b.rank||999); });
+    ativos[selCart] = list;
+    u.ativos = ativos;
+    save(u);
+    setAddingAtivo(false); setEditAtivoIdx(null); setAForm({ticker:"",name:"",rank:"",precoTeto:"",aloc:"",vies:"Comprar"});
+  }
+  function deleteAtivo(idx) {
+    var u = Object.assign({}, cData);
+    var ativos = Object.assign({}, u.ativos||{});
+    var list = (ativos[selCart]||[]).slice();
+    list.splice(idx, 1);
+    ativos[selCart] = list;
+    u.ativos = ativos;
+    save(u);
+  }
+  function cancelAtivo() { setAddingAtivo(false); setEditAtivoIdx(null); }
+
+  async function handleImport(e) {
+    var f = e.target.files[0]; if (!f) return;
+    if (!selCart) { alert("Selecione uma carteira primeiro."); return; }
+    setImporting(true);
+    try {
+      var carteira = (cData.carteiras||[]).find(function(c){return c.id===selCart;});
+      var isIntl = carteira ? carteira.intl : false;
+      var isImage = /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(f.name) || f.type.startsWith("image/");
+      var sysPrompt = 'Voce recebera uma tabela de carteira recomendada da Suno Research. Extraia TODOS os ativos em JSON puro (sem markdown): [{"ticker":"XXXX","name":"Nome da Empresa","rank":1,"precoTeto":25.50,"aloc":5.0,"vies":"Comprar"},...] Regras: ticker em MAIUSCULAS. rank e a posicao/ranking (inteiro). precoTeto em reais ou dolares. ' + (isIntl ? 'Carteira INTERNACIONAL: coloque aloc como null para todos.' : 'aloc e percentual recomendado.') + ' vies: "Comprar", "Aguardar" ou "Vender". Se nao houver, use "Comprar". JSON puro.';
+      var messages;
+      if (isImage) {
+        var b64 = await new Promise(function(res, rej) {
+          var r = new FileReader();
+          r.onload = function() { res(r.result.split(",")[1]); };
+          r.onerror = function() { rej(new Error("Erro leitura")); };
+          r.readAsDataURL(f);
+        });
+        messages = [{role:"user", content:[
+          {type:"image", source:{type:"base64", media_type:f.type||"image/png", data:b64}},
+          {type:"text", text:"Extraia todos os ativos desta tabela. Carteira: " + (carteira?carteira.name:"") + (isIntl?" (Internacional)":"")}
+        ]}];
+      } else {
+        var arrayBuf = await new Promise(function(res, rej) {
+          var r = new FileReader(); r.onload = function(){res(r.result);}; r.onerror = function(){rej(new Error("Erro"));}; r.readAsArrayBuffer(f);
+        });
+        var wb = XLSX.read(arrayBuf, {type:"array"});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+        var tableText = raw.map(function(row){return row.join("\t");}).join("\n");
+        messages = [{role:"user", content:"Carteira: " + (carteira?carteira.name:"") + "\nTabela:\n"+tableText}];
+      }
+      var resp = await fetch("/api/anthropic", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:4096, system:sysPrompt, messages:messages })
+      });
+      if (!resp.ok) throw new Error("API " + resp.status);
+      var d = await resp.json();
+      var rawText = "";
+      for (var i=0;i<d.content.length;i++){if(d.content[i].text)rawText+=d.content[i].text;}
+      rawText = rawText.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      var si=rawText.indexOf("[");var ei=rawText.lastIndexOf("]");
+      if(si>=0&&ei>si)rawText=rawText.slice(si,ei+1);
+      rawText=rawText.replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+      var parsed = JSON.parse(rawText);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        var u = Object.assign({}, cData);
+        var ativos = Object.assign({}, u.ativos||{});
+        var existing = (ativos[selCart]||[]).slice();
+        var existMap = {};
+        existing.forEach(function(a,i){ existMap[a.ticker] = i; });
+        parsed.forEach(function(newA){
+          var t = (newA.ticker||"").toUpperCase();
+          if (!t) return;
+          var entry = {ticker:t, name:newA.name||"", rank:newA.rank||null, precoTeto:newA.precoTeto||null, aloc:isIntl?null:(newA.aloc||null), vies:newA.vies||"Comprar"};
+          if (existMap[t] !== undefined) { existing[existMap[t]] = entry; }
+          else { existing.push(entry); }
+        });
+        existing.sort(function(a,b){ return (a.rank||999)-(b.rank||999); });
+        ativos[selCart] = existing;
+        u.ativos = ativos;
+        save(u);
+        alert("Importados " + parsed.length + " ativos com sucesso!");
+      }
+    } catch(err) { console.error(err); alert("Erro ao importar: " + err.message); }
+    setImporting(false);
+    if (importRef.current) importRef.current.value = "";
+  }
+
+  var iS={width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"8px",padding:"8px 10px",color:"#e2e8f0",fontSize:"12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  var lS={fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)",marginBottom:"4px",display:"block"};
+  var viesColors = {"Comprar":"#4ade80","Aguardar":"#fbbf24","Vender":"#f87171"};
+  var carteiras = cData.carteiras || [];
+  var selCartObj = selCart ? carteiras.find(function(c){return c.id===selCart;}) : null;
+  var selAtivos = selCart ? getCartAtivos(selCart) : [];
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(59,130,246,0.15)",width:"100%",maxWidth:"960px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
+        <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
+          <div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Carteiras Suno</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Recomendações oficiais — Ranking, Preço-teto, Alocação % e Viés</div>
+          </div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{display:"flex",minHeight:"500px"}}>
+          {/* Sidebar */}
+          <div style={{width:"220px",borderRight:"1px solid rgba(255,255,255,0.05)",padding:"12px",flexShrink:0}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+              <div style={{fontSize:"9px",fontWeight:700,color:"rgba(59,130,246,0.8)",textTransform:"uppercase",letterSpacing:"1px"}}>Carteiras</div>
+              <button onClick={function(){setAddingCart(true);setEditCartId(null);setCartName("");setCartIntl(false);}} style={{fontSize:"9px",padding:"3px 8px",borderRadius:"5px",border:"none",background:"rgba(59,130,246,0.12)",color:"#60a5fa",fontWeight:700,cursor:"pointer"}}>+ Nova</button>
+            </div>
+            {carteiras.map(function(c){
+              var cnt = getCartAtivos(c.id).length;
+              var active = selCart === c.id;
+              return <div key={c.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 10px",borderRadius:"8px",marginBottom:"3px",cursor:"pointer",background:active?"rgba(59,130,246,0.1)":"transparent",border:active?"1px solid rgba(59,130,246,0.2)":"1px solid transparent"}} onClick={function(){setSelCart(c.id);setAddingAtivo(false);}}>
+                <div>
+                  <div style={{fontSize:"12px",fontWeight:active?700:500,color:active?"#60a5fa":"rgba(255,255,255,0.6)"}}>{c.name}</div>
+                  <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",display:"flex",gap:"6px",marginTop:"1px"}}>
+                    {c.intl && <span style={{color:"rgba(139,92,246,0.6)",fontWeight:600}}>INTL</span>}
+                    <span>{cnt} ativo{cnt!==1?"s":""}</span>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:"2px"}}>
+                  <button onClick={function(ev){ev.stopPropagation();startEditCart(c);}} style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 4px"}}>✎</button>
+                  <button onClick={function(ev){ev.stopPropagation();deleteCarteira(c.id);}} style={{fontSize:"9px",color:"rgba(220,38,38,0.4)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 4px"}}>✕</button>
+                </div>
+              </div>;
+            })}
+            {addingCart && (<div style={{background:"rgba(59,130,246,0.05)",borderRadius:"8px",padding:"10px",border:"1px solid rgba(59,130,246,0.12)",marginTop:"8px"}}>
+              <div style={{fontSize:"10px",fontWeight:700,color:"#60a5fa",marginBottom:"6px"}}>{editCartId?"Editar":"Nova"} Carteira</div>
+              <input value={cartName} onChange={function(e){setCartName(e.target.value);}} placeholder="Nome da carteira" style={Object.assign({},iS,{fontSize:"11px",marginBottom:"6px"})}/>
+              <label style={{display:"flex",alignItems:"center",gap:"6px",fontSize:"10px",color:"rgba(255,255,255,0.5)",cursor:"pointer",marginBottom:"8px"}}>
+                <input type="checkbox" checked={cartIntl} onChange={function(e){setCartIntl(e.target.checked);}} style={{accentColor:"#8b5cf6"}}/>
+                Internacional (sem Alocação %)
+              </label>
+              <div style={{display:"flex",gap:"4px"}}>
+                <button onClick={cancelCart} style={{flex:1,padding:"5px",borderRadius:"5px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:"10px",cursor:"pointer"}}>Cancelar</button>
+                <button onClick={saveCarteira} disabled={!cartName.trim()} style={{flex:1,padding:"5px",borderRadius:"5px",border:"none",background:cartName.trim()?"#3b82f6":"rgba(255,255,255,0.05)",color:cartName.trim()?"#fff":"rgba(255,255,255,0.3)",fontSize:"10px",fontWeight:700,cursor:"pointer"}}>Salvar</button>
+              </div>
+            </div>)}
+          </div>
+          {/* Main */}
+          <div style={{flex:1,padding:"16px 20px",overflow:"auto"}}>
+            {!selCart && <div style={{textAlign:"center",padding:"80px 0",color:"rgba(255,255,255,0.15)"}}><div style={{fontSize:"36px",marginBottom:"8px"}}>&#128202;</div><div style={{fontSize:"13px"}}>Selecione uma carteira na barra lateral</div><div style={{fontSize:"10px",marginTop:"4px"}}>ou crie uma nova com o botão "+ Nova"</div></div>}
+            {selCart && selCartObj && (<div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
+                <div>
+                  <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>{selCartObj.name}</div>
+                  <div style={{display:"flex",gap:"8px",marginTop:"2px"}}>
+                    {selCartObj.intl && <span style={{fontSize:"9px",padding:"2px 8px",borderRadius:"10px",background:"rgba(139,92,246,0.1)",color:"#a78bfa",fontWeight:600}}>Internacional</span>}
+                    <span style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>{selAtivos.length} ativo{selAtivos.length!==1?"s":""}</span>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  <label style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",background:"rgba(59,130,246,0.06)",color:"#60a5fa",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>
+                    {importing?"Importando...":"Importar Imagem/Excel"}
+                    <input ref={importRef} type="file" accept=".xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" onChange={handleImport} style={{display:"none"}}/>
+                  </label>
+                  <button onClick={startAddAtivo} style={{padding:"7px 12px",borderRadius:"7px",border:"none",background:"#3b82f6",color:"#fff",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>+ Ativo</button>
+                </div>
+              </div>
+              {addingAtivo && (<div style={{background:"rgba(59,130,246,0.04)",border:"1px solid rgba(59,130,246,0.12)",borderRadius:"10px",padding:"14px",marginBottom:"12px"}}>
+                <div style={{fontSize:"11px",fontWeight:700,color:"#60a5fa",marginBottom:"10px"}}>{editAtivoIdx!==null?"Editar":"Adicionar"} Ativo</div>
+                <div style={{display:"grid",gridTemplateColumns:selCartObj.intl?"1fr 1fr 1fr 1fr 1fr":"1fr 1fr 1fr 1fr 1fr 1fr",gap:"8px",marginBottom:"10px"}}>
+                  <div><label style={lS}>Ticker *</label><input value={aForm.ticker} onChange={function(e){setAForm(Object.assign({},aForm,{ticker:e.target.value}));}} placeholder="VALE3" style={iS}/></div>
+                  <div><label style={lS}>Empresa</label><input value={aForm.name} onChange={function(e){setAForm(Object.assign({},aForm,{name:e.target.value}));}} placeholder="Vale S.A." style={iS}/></div>
+                  <div><label style={lS}>Ranking</label><input value={aForm.rank} onChange={function(e){setAForm(Object.assign({},aForm,{rank:e.target.value}));}} type="number" placeholder="1" style={iS}/></div>
+                  <div><label style={lS}>Preço-teto</label><input value={aForm.precoTeto} onChange={function(e){setAForm(Object.assign({},aForm,{precoTeto:e.target.value}));}} type="number" step="0.01" placeholder="65.00" style={iS}/></div>
+                  {!selCartObj.intl && <div><label style={lS}>Alocação %</label><input value={aForm.aloc} onChange={function(e){setAForm(Object.assign({},aForm,{aloc:e.target.value}));}} type="number" step="0.1" placeholder="5.0" style={iS}/></div>}
+                  <div><label style={lS}>Viés</label><select value={aForm.vies} onChange={function(e){setAForm(Object.assign({},aForm,{vies:e.target.value}));}} style={Object.assign({},iS,{cursor:"pointer"})}><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option><option value="Vender">Vender</option></select></div>
+                </div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  <button onClick={cancelAtivo} style={{padding:"7px 14px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"10px",cursor:"pointer"}}>Cancelar</button>
+                  <button onClick={saveAtivo} disabled={!aForm.ticker.trim()} style={{padding:"7px 14px",borderRadius:"7px",border:"none",background:aForm.ticker.trim()?"#3b82f6":"rgba(255,255,255,0.05)",color:aForm.ticker.trim()?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>Salvar</button>
+                </div>
+              </div>)}
+              {selAtivos.length===0&&!addingAtivo&&<div style={{textAlign:"center",padding:"50px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Nenhum ativo nesta carteira.<br/>Clique em "+ Ativo" ou "Importar Imagem/Excel" para adicionar.</div>}
+              {selAtivos.length>0&&(<div style={{overflow:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
+                  <thead><tr style={{borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
+                    <th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px",width:"40px"}}>#</th>
+                    <th style={{textAlign:"left",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Ticker</th>
+                    <th style={{textAlign:"left",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Empresa</th>
+                    <th style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Preço-teto</th>
+                    {!selCartObj.intl&&<th style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Aloc %</th>}
+                    <th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Viés</th>
+                    <th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px",width:"60px"}}>Ações</th>
+                  </tr></thead>
+                  <tbody>{selAtivos.map(function(a,idx){
+                    return <tr key={a.ticker+idx} style={{borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
+                      <td style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.35)",fontWeight:700}}>{a.rank||"—"}</td>
+                      <td style={{padding:"8px 6px",fontWeight:700,color:"#f1f5f9"}}>{a.ticker}</td>
+                      <td style={{padding:"8px 6px",color:"rgba(255,255,255,0.5)"}}>{a.name||"—"}</td>
+                      <td style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.6)",fontWeight:600}}>{a.precoTeto!=null?(selCartObj.intl?"US$ ":"R$ ")+Number(a.precoTeto).toFixed(2):"—"}</td>
+                      {!selCartObj.intl&&<td style={{textAlign:"right",padding:"8px 6px",color:"rgba(59,130,246,0.8)",fontWeight:600}}>{a.aloc!=null?a.aloc+"%":"—"}</td>}
+                      <td style={{textAlign:"center",padding:"8px 6px"}}><span style={{padding:"2px 10px",borderRadius:"12px",fontSize:"10px",fontWeight:700,background:(viesColors[a.vies]||"#94a3b8")+"18",color:viesColors[a.vies]||"#94a3b8",border:"1px solid "+(viesColors[a.vies]||"#94a3b8")+"33"}}>{a.vies||"—"}</span></td>
+                      <td style={{textAlign:"center",padding:"8px 6px"}}>
+                        <button onClick={function(){startEditAtivo(idx);}} style={{fontSize:"9px",color:"rgba(255,255,255,0.35)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 5px",marginRight:"2px"}}>✎</button>
+                        <button onClick={function(){deleteAtivo(idx);}} style={{fontSize:"9px",color:"rgba(220,38,38,0.4)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 5px"}}>✕</button>
+                      </td>
+                    </tr>;
+                  })}</tbody>
+                </table>
+                {!selCartObj.intl&&(function(){
+                  var totalAloc=selAtivos.reduce(function(s,a){return s+(a.aloc||0);},0);
+                  return <div style={{marginTop:"8px",padding:"8px 12px",background:"rgba(59,130,246,0.04)",borderRadius:"8px",border:"1px solid rgba(59,130,246,0.1)",display:"flex",justifyContent:"space-between",fontSize:"10px"}}>
+                    <span style={{color:"rgba(255,255,255,0.4)"}}>Total alocação:</span>
+                    <span style={{fontWeight:700,color:Math.abs(totalAloc-100)<0.5?"#4ade80":totalAloc>100?"#f87171":"#fbbf24"}}>{totalAloc.toFixed(1)}%</span>
+                  </div>;
+                })()}
+              </div>)}
+            </div>)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Consultive Report Module v2 — Tripod Architecture ─── */
 var CONSULT_STEPS = ["profile","journey","position","crossref","generate","review","pdf"];
 var STEP_LABELS = {profile:"1. Cliente",journey:"2. Journey Book",position:"3. Posição Atual",crossref:"4. Cruzamento",generate:"5. Análise IA",review:"6. Revisar",pdf:"7. PDF"};
@@ -2215,6 +2516,7 @@ export default function App() {
   var [showConsultive,setShowConsultive]=useState(false);
   var [showClientProfiles,setShowClientProfiles]=useState(false);
   var [showMacro,setShowMacro]=useState(false);
+  var [showCarteiras,setShowCarteiras]=useState(false);
 
   useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
   useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
@@ -2332,6 +2634,7 @@ export default function App() {
           </div>
           <div style={{display:"flex",gap:"6px"}}>
             <button onClick={function(){setShowClientProfiles(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",cursor:"pointer",background:"rgba(255,255,255,0.02)",color:"rgba(255,255,255,0.45)",fontWeight:600,fontSize:"10px"}} title="Perfis de Clientes">Clientes</button>
+            <button onClick={function(){setShowCarteiras(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",cursor:"pointer",background:"rgba(59,130,246,0.04)",color:"#60a5fa",fontWeight:700,fontSize:"10px"}} title="Carteiras Recomendadas Suno">Carteiras</button>
             <button onClick={function(){setShowMacro(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",background:"rgba(251,191,36,0.04)",color:"#fbbf24",fontWeight:700,fontSize:"10px"}} title="Macro & Viés Tático">Macro</button>
             <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório Consultivo">Consultivo</button>
             <button onClick={function(){setShowReport(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Panorama de Resultados">Panorama</button>
@@ -2396,6 +2699,7 @@ export default function App() {
       {showConsultive&&<ConsultiveReportModal data={data} onClose={function(){setShowConsultive(false);}}/>}
       {showClientProfiles&&<ClientProfilesModal onClose={function(){setShowClientProfiles(false);}}/>}
       {showMacro&&<MacroModal onClose={function(){setShowMacro(false);}}/>}
+      {showCarteiras&&<CarteirasModal onClose={function(){setShowCarteiras(false);}}/>}
     </div>
   );
 }
