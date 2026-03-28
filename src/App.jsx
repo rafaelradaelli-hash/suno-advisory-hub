@@ -1695,8 +1695,18 @@ function ConsultiveReportModal(p) {
   function selectProfile(id) {
     setSelectedProfileId(id);
     var found = clientProfiles.find(function(pr){return pr.id===id;});
-    if (found) { setEditingProfile(Object.assign({}, found)); }
-    else { setEditingProfile(null); }
+    if (found) {
+      setEditingProfile(Object.assign({}, found));
+      // Load saved position if available
+      if (found.posAssets && found.posAssets.length > 0) {
+        setPosAssets(found.posAssets);
+        setPosFileName(found.posFileName || "Posição salva");
+      } else {
+        setPosAssets([]);
+        setPosFileName("");
+      }
+    }
+    else { setEditingProfile(null); setPosAssets([]); setPosFileName(""); }
     setError("");
   }
   function saveProfileToList(profile) {
@@ -1920,6 +1930,11 @@ function ConsultiveReportModal(p) {
         });
       }
       setPosAssets(assets);
+      // Save position to client profile
+      if (editingProfile && assets.length > 0) {
+        var updated = Object.assign({}, editingProfile, {posAssets: assets, posFileName: f.name, posImportDate: new Date().toISOString().slice(0,10)});
+        saveProfileToList(updated);
+      }
       if (assets.length > 0) setError("");
       else setError("Nenhum ativo encontrado na planilha. Verifique o formato.");
     } catch(err) { setError("Erro ao ler Excel: " + err.message); }
@@ -2097,20 +2112,25 @@ function ConsultiveReportModal(p) {
         return ctx;
       });
 
-      var sys = 'Voce e um consultor senior da Suno Consultoria gerando um RELATORIO DE RECOMENDACOES MENSAL.'
-        + ' Voce recebera: perfil do cliente, Journey Book (METAS de alocacao-alvo), POSICAO ATUAL DO EXCEL (composicao real da carteira hoje com % por classe), momento macro, carteiras Suno, e ativos selecionados.'
-        + ' IMPORTANTE: A POSICAO ATUAL vem do EXCEL importado pelo consultor — esta e a fonte de verdade da carteira real do cliente HOJE. O Journey Book contem as METAS de alocacao que o cliente deveria atingir.'
-        + ' O consultor informou R$ ' + cash.toLocaleString("pt-BR") + ' de caixa disponivel para aplicar.'
-        + '\n\nGere um JSON com esta estrutura EXATA:'
-        + ' {"strategy":"TEXTO de 3-5 paragrafos: 1) Compare a POSICAO ATUAL DO EXCEL vs as METAS DO JB por classe — onde esta sub/sobre-alocado? Use os percentuais reais do Excel. 2) Considere momento macro. 3) Identifique oportunidades de rebalanceamento. 4) Explique a logica da distribuicao do caixa proposta. Direto, com numeros concretos do Excel. Sem markdown.",'
-        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO explicando por que aportar nesse ativo agora — mencione como esse aporte ajuda a corrigir gaps vs JB, ranking na carteira Suno, desconto vs preco-teto, resultado recente.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
-        + '\n\nREGRAS:'
-        + ' 1) Distribua os R$ ' + cash.toLocaleString("pt-BR") + ' entre os ativos selecionados de forma inteligente.'
-        + ' 2) Priorize: ativos com maior desconto vs preco-teto, melhor ranking na carteira Suno, vies "Comprar", classes sub-alocadas vs JB.'
-        + ' 3) A soma dos values deve ser EXATAMENTE R$ ' + cash.toLocaleString("pt-BR") + '.'
-        + ' 4) Values devem ser numeros inteiros (sem centavos).'
-        + ' 5) Para ativos com vies "Aguardar", sugira valores menores ou zero.'
-        + ' 6) Siga principios de value investing.'
+      var sys = 'Voce e um consultor de investimentos escrevendo para um cliente que NAO e profissional do mercado financeiro. Use linguagem SIMPLES, CLARA e ACESSIVEL. Evite jargoes tecnicos — quando precisar usar um termo tecnico, explique brevemente entre parenteses.'
+        + '\n\nVoce esta gerando um RELATORIO DE RECOMENDACOES MENSAL para este cliente.'
+        + ' Voce recebera: perfil do cliente, Journey Book (plano de investimento com metas), posicao atual real (do Excel), cenario economico, e ativos selecionados pelo consultor.'
+        + ' A POSICAO ATUAL vem do EXCEL — e a carteira real do cliente HOJE. O Journey Book e o PLANO com as metas que queremos atingir.'
+        + ' O cliente tem R$ ' + cash.toLocaleString("pt-BR") + ' disponiveis para investir este mes.'
+        + '\n\nREGRAS DE ESCRITA:'
+        + ' - NAO mencione rankings internos, classificacoes internas como "ativo #1 da carteira X" ou "lider da carteira Y" ou "vies Comprar/Aguardar".'
+        + ' - NAO use expressoes como "margem de seguranca", "upside", "downside", "valuation", "multiplos" sem explicar.'
+        + ' - FOQUE na tese do ativo (por que e um bom investimento), nos resultados recentes da empresa, na visao dos analistas, e no desconto atual do preco (quanto esta abaixo do preco considerado justo).'
+        + ' - Explique como cada aporte se encaixa no plano do cliente (Journey Book).'
+        + ' - Escreva como se estivesse conversando com o cliente em uma reuniao.'
+        + '\n\nGere um JSON com esta estrutura:'
+        + ' {"strategy":"TEXTO de 3-5 paragrafos: 1) Onde esta a carteira hoje vs o plano — quais classes de ativos precisam de mais investimento? Use os numeros reais do Excel. 2) Como esta o cenario economico e o que isso significa para a carteira. 3) Quais oportunidades enxergamos para este mes. 4) Como estamos propondo distribuir os R$ ' + cash.toLocaleString("pt-BR") + ' e por que. Linguagem SIMPLES e CLARA. Sem markdown.",'
+        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO (3-4 frases) em linguagem simples: o que a empresa faz, como estao seus resultados recentes, quanto o preco atual esta abaixo do preco justo, e por que faz sentido investir agora considerando o plano do cliente.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
+        + '\n\nREGRAS TECNICAS:'
+        + ' 1) Distribua os R$ ' + cash.toLocaleString("pt-BR") + ' de forma inteligente entre os ativos.'
+        + ' 2) Priorize: ativos com maior desconto vs preco justo, classes que precisam de mais investimento conforme o plano, empresas com bons resultados recentes.'
+        + ' 3) A soma dos valores deve ser EXATAMENTE R$ ' + cash.toLocaleString("pt-BR") + '.'
+        + ' 4) Valores inteiros (sem centavos).'
         + ' JSON puro sem markdown.';
 
       var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa: R$ " + cash.toLocaleString("pt-BR") + "\nATIVOS SELECIONADOS:\n" + JSON.stringify(assetsCtx);
@@ -2147,8 +2167,9 @@ function ConsultiveReportModal(p) {
       });
       var totalAlloc = items.reduce(function(s,a){return s+(a.value||0);},0);
 
-      var sys = 'O consultor ajustou os valores de aporte. Reescreva APENAS os textos (rationale) para cada ativo, mantendo os valores informados. Tambem reescreva a strategy considerando a nova distribuicao.'
-        + ' JSON: {"strategy":"NOVO TEXTO 3-5 paragrafos","allocations":[{"ticker":"","rationale":"1 PARAGRAFO atualizado com o novo valor","verdict":"APORTAR|MANTER"}]} JSON puro.';
+      var sys = 'O consultor ajustou os valores de aporte. Reescreva os textos mantendo os NOVOS VALORES. Use linguagem SIMPLES e CLARA, como se falasse com alguem que nao e do mercado financeiro.'
+        + ' NAO mencione rankings internos, "vies Comprar/Aguardar", "lider da carteira X". FOQUE na tese do ativo, resultados recentes, desconto vs preco justo, e como se encaixa no plano.'
+        + ' JSON: {"strategy":"NOVO TEXTO 3-5 paragrafos em linguagem simples","allocations":[{"ticker":"","rationale":"1 PARAGRAFO atualizado com novo valor, linguagem clara","verdict":"APORTAR|MANTER"}]} JSON puro.';
       var userMsg = "Estrategia anterior:\n" + strategyText.slice(0,2000) + "\n\nNOVOS VALORES (total R$ " + totalAlloc.toLocaleString("pt-BR") + "):\n" + JSON.stringify(items) + "\n\n" + buildProfileContext() + "\n" + buildJourneyContext();
 
       var resp = await fetch("/api/anthropic", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({model:"claude-sonnet-4-20250514", max_tokens:4096, system:sys, messages:[{role:"user",content:userMsg}]}) });
@@ -2389,11 +2410,18 @@ function ConsultiveReportModal(p) {
                 {/* STEP 1: Position */}
                 {recStep==="position"&&(<div>
                   <div style={{fontSize:"10px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>Posição Atual</div>
+                  {posAssets.length>0&&editingProfile&&editingProfile.posImportDate&&!posFile&&(
+                    <div style={{background:"rgba(74,222,128,0.04)",border:"1px solid rgba(74,222,128,0.15)",borderRadius:"8px",padding:"10px",marginBottom:"10px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <div><span style={{fontSize:"9px",padding:"2px 8px",borderRadius:"10px",background:"rgba(74,222,128,0.12)",color:"#4ade80",fontWeight:700}}>POSIÇÃO SALVA</span><span style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",marginLeft:"8px"}}>{posAssets.length} ativos · {editingProfile.posImportDate}</span></div>
+                      </div>
+                    </div>
+                  )}
                   <label style={{display:"block",padding:"14px",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:"8px",textAlign:"center",cursor:"pointer",color:"rgba(255,255,255,0.3)",fontSize:"11px",marginBottom:"10px"}}>
-                    {posFileName||"Upload Excel da posição (.xlsx)"}
+                    {posFileName&&posFile?posFileName:(posAssets.length>0?"Importar nova planilha (substitui a salva)":"Upload Excel da posição (.xlsx)")}
                     <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
                   </label>
-                  {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos encontrados</div>}
+                  {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos carregados</div>}
                   <div style={{marginBottom:"10px"}}><label style={lS}>Caixa disponível (R$)</label><input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} type="number" placeholder="50000" style={iS}/></div>
                   <button onClick={function(){buildAssetList();}} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Selecionar Ativos →</button>
                 </div>)}
