@@ -1825,38 +1825,101 @@ function ConsultiveReportModal(p) {
       });
       var wb = XLSX.read(arrayBuf, {type:"array"});
       var ws = wb.Sheets[wb.SheetNames[0]];
-      var raw = XLSX.utils.sheet_to_json(ws, {defval:""});
-      if (raw.length === 0) { setError("Planilha vazia"); return; }
-      var cols = Object.keys(raw[0]);
-      function findCol(patterns) {
-        for (var ci = 0; ci < cols.length; ci++) {
-          var cl = cols[ci].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-          for (var pi = 0; pi < patterns.length; pi++) { if (cl.indexOf(patterns[pi]) >= 0) return cols[ci]; }
+      var allRows = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+      if (allRows.length === 0) { setError("Planilha vazia"); return; }
+
+      // Find the header row (look for "Ativo" or "Ticker" or "Posição" in any row)
+      var headerIdx = -1;
+      var colMap = {};
+      for (var hi = 0; hi < Math.min(allRows.length, 50); hi++) {
+        var row = allRows[hi];
+        for (var ci = 0; ci < row.length; ci++) {
+          var val = String(row[ci]||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+          if (val === "ativo" || val === "ticker" || val === "codigo" || val === "papel") {
+            headerIdx = hi;
+            break;
+          }
         }
-        return null;
+        if (headerIdx >= 0) break;
       }
-      var tickerCol = findCol(["ativo","ticker","codigo","papel","symbol"]) || cols[0];
-      var nameCol = findCol(["nome","name","empresa","descri"]);
-      var qtyCol = findCol(["qtd","quantidade","quantity","shares"]);
-      var avgPriceCol = findCol(["preco medio","preco_medio","avg","medio","custo"]);
-      var currentPriceCol = findCol(["preco atual","preco_atual","cotacao","current","ultimo"]);
-      var totalCol = findCol(["total atual","valor atual","total_atual","saldo","valor","financeiro"]);
-      var typeCol = findCol(["tipo","type","classe","categoria","asset"]);
+
+      if (headerIdx < 0) {
+        // Fallback: try standard sheet_to_json
+        var raw2 = XLSX.utils.sheet_to_json(ws, {defval:""});
+        if (raw2.length > 0) {
+          var cols2 = Object.keys(raw2[0]);
+          var tc2 = cols2[0];
+          var assets2 = [];
+          for (var r2 = 0; r2 < raw2.length; r2++) {
+            var tk2 = String(raw2[r2][tc2]||"").trim().toUpperCase();
+            if (!tk2 || tk2.length < 2) continue;
+            assets2.push({ticker:tk2, name:"", qty:0, avgPrice:0, currentPrice:0, totalValue:0, type:"", subClass:"", classe:""});
+          }
+          setPosAssets(assets2);
+        }
+        return;
+      }
+
+      // Map columns by header name
+      var headers = allRows[headerIdx];
+      function findHCol(patterns) {
+        for (var c = 0; c < headers.length; c++) {
+          var h = String(headers[c]||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
+          for (var p = 0; p < patterns.length; p++) { if (h.indexOf(patterns[p]) >= 0) return c; }
+        }
+        return -1;
+      }
+
+      var iAtivo = findHCol(["ativo","ticker","codigo","papel"]);
+      var iSubClass = findHCol(["sub-classe","subclasse","sub classe","subcategoria"]);
+      var iClasse = findHCol(["classe","class","categoria","tipo"]);
+      var iQty = findHCol(["quantidade","qtd","qty","shares"]);
+      var iPos = findHCol(["posicao","posição","posição (r$)","posicao (r$)","saldo","valor","financeiro"]);
+      var iPreco = findHCol(["preco (r$)","preco","cotacao","preco atual","ultimo"]);
+      var iPrecoMedio = findHCol(["preco medio","medio","custo","preco médio"]);
+      var iCorretora = findHCol(["corretora","broker","custodiante"]);
+
       var assets = [];
-      for (var ri = 0; ri < raw.length; ri++) {
-        var row = raw[ri];
-        var tk = String(row[tickerCol] || "").trim().toUpperCase();
-        if (!tk || tk === "TOTAL" || tk === "SUBTOTAL" || tk.length < 2) continue;
+      for (var ri = headerIdx + 1; ri < allRows.length; ri++) {
+        var row = allRows[ri];
+        var ativoRaw = String(row[iAtivo >= 0 ? iAtivo : 0] || "").trim();
+        if (!ativoRaw || ativoRaw.length < 2) continue;
+        if (/^(total|subtotal|patrimonio|resultado|rentabilidade)$/i.test(ativoRaw)) continue;
+
+        var subClass = iSubClass >= 0 ? String(row[iSubClass]||"").trim() : "";
+        var classe = iClasse >= 0 ? String(row[iClasse]||"").trim() : "";
+        var totalVal = iPos >= 0 ? parseFloat(String(row[iPos]||"0").toString().replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0;
+        var qty = iQty >= 0 ? parseFloat(String(row[iQty]||"0").toString().replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0;
+        var preco = iPreco >= 0 ? parseFloat(String(row[iPreco]||"0").toString().replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0;
+        var precoMedio = iPrecoMedio >= 0 ? parseFloat(String(row[iPrecoMedio]||"0").toString().replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0;
+
+        // Extract ticker from ativo field (could be "VALE3" or "LCA 91% CDI BANCO...")
+        var ticker = ativoRaw.toUpperCase();
+        var name = "";
+        // If it looks like a ticker (4-6 chars + optional number), use as is
+        if (/^[A-Z]{3,6}\d{0,2}$/.test(ticker)) {
+          name = ativoRaw;
+        } else {
+          // It's a name (e.g. "LCA 91% CDI BANCO BTG"). Use first word or abbreviate
+          name = ativoRaw;
+          // Try to extract a short label
+          if (ativoRaw.length > 20) ticker = ativoRaw.slice(0, 20) + "...";
+        }
+
+        // Skip zero-value rows
+        if (totalVal === 0 && qty === 0) continue;
+
         assets.push({
-          ticker: tk, name: nameCol ? String(row[nameCol] || "") : "",
-          qty: qtyCol ? parseFloat(String(row[qtyCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
-          avgPrice: avgPriceCol ? parseFloat(String(row[avgPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
-          currentPrice: currentPriceCol ? parseFloat(String(row[currentPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
-          totalValue: totalCol ? parseFloat(String(row[totalCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
-          type: typeCol ? String(row[typeCol] || "") : ""
+          ticker: ticker, name: name,
+          qty: qty, avgPrice: precoMedio, currentPrice: preco,
+          totalValue: totalVal,
+          type: classe, // "Renda Fixa", "Renda Variável", "Caixa"
+          subClass: subClass // "Ações", "FIIs", "ETFs", "Indexado a Juros", "Fundos", "Caixa"
         });
       }
       setPosAssets(assets);
+      if (assets.length > 0) setError("");
+      else setError("Nenhum ativo encontrado na planilha. Verifique o formato.");
     } catch(err) { setError("Erro ao ler Excel: " + err.message); }
   }
 
@@ -2263,25 +2326,35 @@ function ConsultiveReportModal(p) {
                 {recStep==="select"&&crossrefData&&(function(){
                   var cartNames=[];(carteirasData.carteiras||[]).forEach(function(cart){if((carteirasData.ativos[cart.id]||[]).length>0)cartNames.push(cart.name);});
                   
-                  // ── Classify ticker into asset class ──
-                  function classifyTicker(ticker, typeHint, classHint) {
+                  // ── Classify asset using Excel subClass + classe ──
+                  function classifyAsset(ticker, subClass, classe, classHint) {
+                    var sc = (subClass||"").toLowerCase();
+                    var cl = (classe||"").toLowerCase();
+                    var ch = (classHint||"").toLowerCase();
                     var tk = (ticker||"").toUpperCase();
-                    var tp = (typeHint||"").toLowerCase();
-                    var cl = (classHint||"").toLowerCase();
-                    // Explicit type hints from Excel or JB
-                    if(tp.indexOf("fii")>=0||tp.indexOf("imobili")>=0||cl.indexOf("fii")>=0||cl.indexOf("imobili")>=0) return "FIIs";
-                    if(tp.indexOf("renda fixa")>=0||tp.indexOf("rf")>=0||tp.indexOf("fix")>=0||cl.indexOf("renda")>=0||cl.indexOf("fix")>=0) return "Renda Fixa";
-                    if(tp.indexOf("intern")>=0||cl.indexOf("intern")>=0) return "Internacional";
-                    if(tp.indexOf("alter")>=0||tp.indexOf("multi")>=0||cl.indexOf("alter")>=0) return "Alternativos";
-                    if(tp.indexOf("aço")>=0||tp.indexOf("ação")>=0||cl.indexOf("aço")>=0||cl.indexOf("ação")>=0||cl.indexOf("equit")>=0) return "Ações BR";
-                    // Ticker pattern heuristics (Brazilian market)
-                    if(/^[A-Z]{4}11$/.test(tk)) return "FIIs"; // XPML11, HGLG11
-                    if(/^[A-Z]{4}(3|4|5|6|33|34)$/.test(tk)) return "Ações BR"; // VALE3, PETR4
-                    if(/^[A-Z]{4}11[BF]?$/.test(tk)&&(tp.indexOf("fii")>=0||tk.indexOf("FII")>=0)) return "FIIs";
-                    // International tickers (no numbers, or specific patterns)
-                    if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Internacional"; // META, GOOG, BKNG
-                    if(cl.indexOf("aç")>=0||cl.indexOf("ações")>=0) return "Ações BR";
-                    return "Ações BR"; // default for unknown
+                    // Use Excel subClass first (most reliable)
+                    if(sc.indexOf("fii")>=0||sc.indexOf("imobili")>=0) return "FIIs";
+                    if(sc.indexOf("aço")>=0||sc==="ações"||sc==="acoes") return "Ações BR";
+                    if(sc.indexOf("etf")>=0) return "Internacional"; // ETFs like IVVB11, NASD11 are international exposure
+                    if(sc.indexOf("indexado")>=0||sc.indexOf("juros")>=0||sc.indexOf("fundo")>=0) return "Renda Fixa";
+                    if(sc.indexOf("caixa")>=0||sc==="caixa") return "Renda Fixa";
+                    // Use Excel classe
+                    if(cl.indexOf("renda fixa")>=0||cl.indexOf("caixa")>=0) return "Renda Fixa";
+                    if(cl.indexOf("renda vari")>=0) {
+                      // Need subclass to differentiate RV types
+                      if(/^[A-Z]{4}11$/.test(tk)) return "FIIs";
+                      if(/^[A-Z]{4}(3|4|5|6)$/.test(tk)) return "Ações BR";
+                      return "Ações BR";
+                    }
+                    // Fallback: use JB class hint or ticker pattern
+                    if(ch.indexOf("fii")>=0||ch.indexOf("imobili")>=0) return "FIIs";
+                    if(ch.indexOf("intern")>=0) return "Internacional";
+                    if(ch.indexOf("renda")>=0||ch.indexOf("fix")>=0) return "Renda Fixa";
+                    if(ch.indexOf("alter")>=0) return "Alternativos";
+                    if(/^[A-Z]{4}11$/.test(tk)) return "FIIs";
+                    if(/^[A-Z]{4}(3|4|5|6|33|34)$/.test(tk)) return "Ações BR";
+                    if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Internacional";
+                    return "Ações BR";
                   }
 
                   // ── Build class summary: JB meta vs Excel position ──
@@ -2299,7 +2372,7 @@ function ConsultiveReportModal(p) {
                   // Position % from EXCEL posAssets (source of truth)
                   var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
                   posAssets.forEach(function(pa){
-                    var mapped = classifyTicker(pa.ticker, pa.type, "");
+                    var mapped = classifyAsset(pa.ticker, pa.subClass, pa.type, "");
                     if(classMap[mapped]){
                       classMap[mapped].posValue += (pa.totalValue||0);
                     }
@@ -2311,7 +2384,10 @@ function ConsultiveReportModal(p) {
 
                   // Map crossref assets to classes for ticker list + enrich with classTag
                   crossrefData.forEach(function(a){
-                    var mapped = classifyTicker(a.ticker, "", a.class);
+                    // Find matching posAsset for subClass info
+                    var pa = null;
+                    for(var pi=0;pi<posAssets.length;pi++){if(posAssets[pi].ticker===a.ticker){pa=posAssets[pi];break;}}
+                    var mapped = classifyAsset(a.ticker, pa?pa.subClass:"", pa?pa.type:"", a.class);
                     a._classTag = mapped;
                     if(classMap[mapped]) classMap[mapped].tickers.push(a.ticker);
                   });
@@ -2350,11 +2426,11 @@ function ConsultiveReportModal(p) {
 
                     {/* Filters row */}
                     <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px"}}>
-                      <select value={filterVies} onChange={function(e){setFilterVies(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Viés: Todos</option><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option></select>
-                      <select value={filterCarteira} onChange={function(e){setFilterCarteira(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Carteira: Todas</option>{cartNames.map(function(cn){return <option key={cn} value={cn}>{cn}</option>;})}</select>
-                      <select value={filterSentiment} onChange={function(e){setFilterSentiment(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Sentimento: Todos</option><option value="positive">Positivo</option><option value="neutral">Neutro</option><option value="negative">Negativo</option></select>
-                      <select value={filterRank} onChange={function(e){setFilterRank(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Rank: Todos</option><option value="top5">Top 5</option><option value="top10">Top 10</option></select>
-                      <select value={filterMargem} onChange={function(e){setFilterMargem(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Margem: Todas</option><option value="desconto">Com desconto</option><option value="desconto20">&gt;20%</option></select>
+                      <select value={filterVies} onChange={function(e){setFilterVies(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Viés: Todos</option><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option></select>
+                      <select value={filterCarteira} onChange={function(e){setFilterCarteira(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Carteira: Todas</option>{cartNames.map(function(cn){return <option key={cn} value={cn}>{cn}</option>;})}</select>
+                      <select value={filterSentiment} onChange={function(e){setFilterSentiment(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Sentimento: Todos</option><option value="positive">Positivo</option><option value="neutral">Neutro</option><option value="negative">Negativo</option></select>
+                      <select value={filterRank} onChange={function(e){setFilterRank(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Rank: Todos</option><option value="top5">Top 5</option><option value="top10">Top 10</option></select>
+                      <select value={filterMargem} onChange={function(e){setFilterMargem(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Margem: Todas</option><option value="desconto">Com desconto</option><option value="desconto20">&gt;20%</option></select>
                     </div>
 
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
