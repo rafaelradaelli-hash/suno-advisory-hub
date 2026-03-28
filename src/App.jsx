@@ -577,13 +577,15 @@ function ReportModal(p) {
 
   // AI rewrite helper - rewrites text fields in selected tone
   async function rewriteTexts(stocks) {
-    if (writingTone === "profissional") return stocks; // Original texts are already professional
+    if (writingTone === "profissional") return stocks;
     setGenProgress("Adaptando textos ao tom selecionado...");
-    var batchSize = 5;
+    var batchSize = 2; // Small batches = much better tone consistency
     var rewritten = stocks.map(function(s){return Object.assign({},s);});
+    var toneRule = getToneInstruction(writingTone, false);
+
     for (var b = 0; b < rewritten.length; b += batchSize) {
       var batch = rewritten.slice(b, b + batchSize);
-      setGenProgress("Adaptando " + batch.map(function(s){return s.ticker;}).join(", ") + "...");
+      setGenProgress("Adaptando " + batch.map(function(s){return s.ticker;}).join(", ") + " (" + (b+1) + "-" + Math.min(b+batchSize, rewritten.length) + " de " + rewritten.length + ")...");
       var toRewrite = batch.map(function(s){
         return {
           ticker: s.ticker,
@@ -597,9 +599,13 @@ function ReportModal(p) {
         };
       });
       try {
-        var sys = 'Reescreva os textos de investimento no tom solicitado. Mantenha TODOS os dados numericos e fatos. Apenas mude a linguagem.\n\nTOM: ' + getToneInstruction(writingTone, false)
+        var sys = 'Voce e um tradutor de linguagem financeira. Sua UNICA tarefa e reescrever textos de investimento mudando o TOM, sem alterar fatos ou numeros.'
+          + '\n\n' + toneRule
+          + '\n\nREGRA CRITICA: Releia CADA frase que voce escrever e verifique se esta no tom correto. Se encontrar QUALQUER termo tecnico proibido, reescreva a frase.'
           + '\n\nResponda SOMENTE com JSON puro: [{"ticker":"","thesis":"","result":"","sunoView":"","thesisPros":[""],"thesisCons":[""],"resultPros":[""],"resultCons":[""]}]';
-        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:sys,messages:[{role:"user",content:JSON.stringify(toRewrite)}]})});
+        var userMsg = 'LEMBRETE: ' + (writingTone === "simples" ? "PROIBIDO usar P/L, EBITDA, yield, spread, margem, guidance, ROE. Use palavras do dia-a-dia. Frases CURTAS de no maximo 15 palavras." : "Termos basicos OK, mas explique brevemente termos avancados.")
+          + '\n\nReescreva estes textos:\n' + JSON.stringify(toRewrite);
+        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:sys,messages:[{role:"user",content:userMsg}]})});
         if (resp.ok) {
           var d = await resp.json();
           var raw = "";
@@ -624,7 +630,7 @@ function ReportModal(p) {
             });
           }
         }
-      } catch(err) { console.error("Rewrite error:", err); }
+      } catch(err) { console.error("Rewrite error for batch " + b + ":", err); }
     }
     return rewritten;
   }
