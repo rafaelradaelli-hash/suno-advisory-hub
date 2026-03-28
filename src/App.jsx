@@ -1021,22 +1021,67 @@ BIAS_CLASSES.forEach(function(g){g.items.forEach(function(it){ALL_BIAS_ITEMS.pus
 
 function loadMacroData() {
   try { var s = localStorage.getItem("tt-macro"); if (s) return JSON.parse(s); } catch(e) {}
-  return { macroReport:"", macroDate:"", biasViews:{}, allocationTable:{} };
+  return { macroReports:[], biasViews:{}, allocationTable:{} };
 }
 function saveMacroData(d) { try { localStorage.setItem("tt-macro", JSON.stringify(d)); } catch(e) {} }
 
 function MacroModal(p) {
-  var [macroData, setMacroData] = useState(function(){return loadMacroData();});
+  var [macroData, setMacroData] = useState(function(){
+    var d = loadMacroData();
+    // Migrate old single report to array
+    if (d.macroReport && (!d.macroReports || d.macroReports.length === 0)) {
+      d.macroReports = [{id: Date.now().toString(36), date: d.macroDate || new Date().toISOString().slice(0,10), title: "Relatório Macro", text: d.macroReport}];
+      delete d.macroReport; delete d.macroDate;
+    }
+    if (!d.macroReports) d.macroReports = [];
+    return d;
+  });
   var [tab, setTab] = useState("report");
   var [importing, setImporting] = useState(false);
   var biasFileRef = useRef(null);
 
+  // Report editing state
+  var [addingReport, setAddingReport] = useState(false);
+  var [editReportId, setEditReportId] = useState(null);
+  var [rTitle, setRTitle] = useState("");
+  var [rDate, setRDate] = useState(new Date().toISOString().slice(0,10));
+  var [rText, setRText] = useState("");
+
   function save(updated) { setMacroData(updated); saveMacroData(updated); }
 
-  function setMacroReport(val) {
-    var u = Object.assign({}, macroData, {macroReport: val, macroDate: new Date().toISOString().slice(0,10)});
+  function startAddReport() {
+    setAddingReport(true); setEditReportId(null);
+    setRTitle(""); setRDate(new Date().toISOString().slice(0,10)); setRText("");
+  }
+  function startEditReport(id) {
+    var rep = (macroData.macroReports||[]).find(function(r){return r.id===id;});
+    if (!rep) return;
+    setEditReportId(id); setAddingReport(true);
+    setRTitle(rep.title||""); setRDate(rep.date||""); setRText(rep.text||"");
+  }
+  function saveReport() {
+    if (!rText.trim()) return;
+    var u = Object.assign({}, macroData);
+    var reports = (u.macroReports||[]).slice();
+    if (editReportId) {
+      reports = reports.map(function(r){
+        if (r.id === editReportId) return {id:r.id, date:rDate, title:rTitle.trim()||"Relatório Macro", text:rText};
+        return r;
+      });
+    } else {
+      reports.unshift({id: Date.now().toString(36) + Math.random().toString(36).slice(2,5), date:rDate, title:rTitle.trim()||"Relatório Macro", text:rText});
+    }
+    u.macroReports = reports;
+    save(u);
+    setAddingReport(false); setEditReportId(null); setRTitle(""); setRDate(""); setRText("");
+  }
+  function deleteReport(id) {
+    if (!confirm("Excluir este relatório?")) return;
+    var u = Object.assign({}, macroData);
+    u.macroReports = (u.macroReports||[]).filter(function(r){return r.id!==id;});
     save(u);
   }
+  function cancelReport() { setAddingReport(false); setEditReportId(null); }
 
   function setBiasView(item, val) {
     var u = Object.assign({}, macroData);
@@ -1151,9 +1196,48 @@ function MacroModal(p) {
 
         <div style={{padding:"20px 24px 24px"}}>
           {tab==="report"&&(<div>
-            <label style={lS}>Relatório Macroeconômico da Suno {macroData.macroDate && <span style={{color:"rgba(255,255,255,0.2)"}}>(atualizado: {macroData.macroDate})</span>}</label>
-            <textarea value={macroData.macroReport||""} onChange={function(e){setMacroReport(e.target.value);}} rows={16} placeholder="Cole aqui o texto do relatório macro da Suno. Inclua visão sobre Selic, inflação, câmbio, ciclo econômico, perspectivas por classe de ativo, etc. A IA usará este contexto para personalizar as recomendações de todos os clientes." style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px",minHeight:"300px"})}/>
-            <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",marginTop:"6px"}}>Atualize quando a Suno publicar um novo relatório macro. Salvo automaticamente.</div>
+            {!addingReport && (<div>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+                <div>
+                  <div style={{fontSize:"12px",fontWeight:700,color:"#fff"}}>Relatórios Macro Acumulados</div>
+                  <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>{(macroData.macroReports||[]).length} relatório(s) salvos — IA usa os últimos 10</div>
+                </div>
+                <button onClick={startAddReport} style={{padding:"7px 14px",borderRadius:"7px",border:"none",background:"#DC2626",color:"#fff",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>+ Novo Relatório</button>
+              </div>
+              {(macroData.macroReports||[]).length === 0 && <div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Nenhum relatório macro cadastrado. Clique em "+ Novo Relatório" para começar a alimentar a inteligência macro.</div>}
+              {(macroData.macroReports||[]).map(function(rep, idx){
+                return <div key={rep.id} style={{background:idx<10?"#111":"rgba(255,255,255,0.02)",borderRadius:"10px",padding:"12px",border:idx<10?"1px solid rgba(255,255,255,0.06)":"1px solid rgba(255,255,255,0.03)",marginBottom:"6px",opacity:idx>=10?0.5:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                      {idx<10 && <span style={{fontSize:"8px",padding:"2px 6px",borderRadius:"6px",background:"rgba(74,222,128,0.1)",color:"#4ade80",fontWeight:600}}>ATIVO</span>}
+                      {idx>=10 && <span style={{fontSize:"8px",padding:"2px 6px",borderRadius:"6px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.25)",fontWeight:600}}>ARQUIVO</span>}
+                      <span style={{fontSize:"12px",fontWeight:700,color:"#f1f5f9"}}>{rep.title || "Relatório Macro"}</span>
+                      <span style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>{rep.date}</span>
+                    </div>
+                    <div style={{display:"flex",gap:"4px"}}>
+                      <button onClick={function(){startEditReport(rep.id);}} style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",background:"rgba(255,255,255,0.04)",border:"none",borderRadius:"4px",padding:"3px 8px",cursor:"pointer"}}>Editar</button>
+                      <button onClick={function(){deleteReport(rep.id);}} style={{fontSize:"9px",color:"rgba(220,38,38,0.5)",background:"transparent",border:"1px solid rgba(220,38,38,0.15)",borderRadius:"4px",padding:"3px 8px",cursor:"pointer"}}>Excluir</button>
+                    </div>
+                  </div>
+                  <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",lineHeight:1.5,maxHeight:"60px",overflow:"hidden"}}>{(rep.text||"").slice(0,300)}{(rep.text||"").length>300?"...":""}</div>
+                </div>;
+              })}
+            </div>)}
+            {addingReport && (<div>
+              <div style={{fontSize:"12px",fontWeight:700,color:"#fff",marginBottom:"10px"}}>{editReportId ? "Editar Relatório" : "Novo Relatório Macro"}</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"10px"}}>
+                <div><label style={lS}>Título / Referência</label><input value={rTitle} onChange={function(e){setRTitle(e.target.value);}} placeholder="Ex: Relatório Macro Mensal - Março 2026" style={iS}/></div>
+                <div><label style={lS}>Data do relatório</label><input value={rDate} onChange={function(e){setRDate(e.target.value);}} type="date" style={iS}/></div>
+              </div>
+              <div style={{marginBottom:"10px"}}>
+                <label style={lS}>Texto do relatório (Ctrl+C / Ctrl+V do PDF)</label>
+                <textarea value={rText} onChange={function(e){setRText(e.target.value);}} rows={14} placeholder="Cole aqui o texto completo do relatório macro da Suno. Inclua visão sobre Selic, inflação, câmbio, ciclo econômico, perspectivas por classe de ativo, cenário internacional, etc." style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px",minHeight:"250px"})}/>
+              </div>
+              <div style={{display:"flex",gap:"8px"}}>
+                <button onClick={cancelReport} style={{padding:"8px 16px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"11px",cursor:"pointer"}}>Cancelar</button>
+                <button onClick={saveReport} disabled={!rText.trim()} style={{flex:1,padding:"8px 16px",borderRadius:"7px",border:"none",background:rText.trim()?"#DC2626":"rgba(255,255,255,0.05)",color:rText.trim()?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:"11px",cursor:"pointer"}}>Salvar Relatório</button>
+              </div>
+            </div>)}
           </div>)}
 
           {tab==="bias"&&(<div>
@@ -1645,9 +1729,18 @@ function ConsultiveReportModal(p) {
       // Build macro context (Pilar 4)
       var macroCtx = "";
       var md = loadMacroData();
-      if (md.macroReport || (md.biasViews && Object.keys(md.biasViews).length > 0)) {
+      var hasReports = md.macroReports && md.macroReports.length > 0;
+      if (hasReports || (md.biasViews && Object.keys(md.biasViews).length > 0)) {
         var mp = ["PILAR 4 — VISAO MACRO E VIES TATICO DA SUNO:"];
-        if (md.macroReport) mp.push("RELATORIO MACRO:\n" + md.macroReport.slice(0, 8000));
+        if (hasReports) {
+          var recentReports = md.macroReports.slice(0, 10);
+          mp.push("RELATORIOS MACRO (" + recentReports.length + " mais recentes):");
+          recentReports.forEach(function(rep, idx) {
+            var maxChars = idx === 0 ? 4000 : 2000; // mais espaço para o mais recente
+            mp.push("\n--- " + (rep.title||"Relatório") + " (" + (rep.date||"s/d") + ") ---");
+            mp.push(rep.text.slice(0, maxChars) + (rep.text.length > maxChars ? "..." : ""));
+          });
+        }
         if (md.biasViews && Object.keys(md.biasViews).length > 0) {
           mp.push("\nVIES TATICO POR CLASSE (escala -2=muito pessimista a +2=muito otimista):");
           Object.keys(md.biasViews).forEach(function(cls) {
