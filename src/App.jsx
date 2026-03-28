@@ -744,11 +744,14 @@ function ReportModal(p) {
   ];
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
-      <div style={{background:"#111",borderRadius:"14px",border:"1px solid rgba(255,255,255,0.08)",width:"100%",maxWidth:"600px",maxHeight:"90vh",overflow:"auto",padding:"24px"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:p.inline?"transparent":"#111",borderRadius:p.inline?"0":"14px",border:p.inline?"none":"1px solid rgba(255,255,255,0.08)",width:"100%",maxWidth:"600px",maxHeight:p.inline?"none":"90vh",overflow:"auto",padding:"24px",margin:p.inline?"0 auto":"0"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
-          <div style={{fontSize:"15px",fontWeight:700,color:"#fff"}}>Gerar Relatório PDF</div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"18px",cursor:"pointer",padding:"4px 8px"}}>&#10005;</button>
+          <div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Panorama de Resultados</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Relatório PDF com ativos selecionados</div>
+          </div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"18px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>&#10005;</button>
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
@@ -1781,7 +1784,7 @@ function MeetingPrepModal(p) {
           if (wantMacroDetail) macroPrompt += '"macroDetail":"3 paragrafos detalhados sobre o cenario macro: economia brasileira, cenario global, perspectivas. Baseado nos relatorios Suno."';
           macroPrompt += "} JSON puro sem markdown.";
 
-          var macroResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:macroSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:macroPrompt}]})});
+          var macroResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:macroSys,messages:[{role:"user",content:macroPrompt}]})});
           if (macroResp.ok) {
             var macroD = await macroResp.json();
             var macroRaw = extractText(macroD.content);
@@ -3466,7 +3469,7 @@ export default function App() {
   // Pillar configs
   var pillarItems = {
     research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"macro",label:"Macro & Viés"}],
-    consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
+    consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"},{id:"panorama",label:"Panorama de Resultados"}],
     clientes: [{id:"perfis",label:"Perfis & JB"},{id:"config",label:"Configurações"}]
   };
   var pillarColors = {research:"#991b1b",consultoria:"#DC2626",clientes:"#ef4444"};
@@ -3551,6 +3554,9 @@ export default function App() {
 
         {/* CONSULTORIA > REUNIÃO */}
         {pilar==="consultoria"&&page==="reuniao"&&<MeetingPrepModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CONSULTORIA > PANORAMA */}
+        {pilar==="consultoria"&&page==="panorama"&&<ReportModal data={data} onClose={function(){nav("consultoria","panorama");}} inline={true}/>}
 
         {/* CLIENTES > PERFIS */}
         {pilar==="clientes"&&page==="perfis"&&<ClientProfilesModal onClose={function(){nav("research","teses");}} inline={true}/>}
