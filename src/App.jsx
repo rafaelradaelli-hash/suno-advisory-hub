@@ -1064,27 +1064,46 @@ function MacroModal(p) {
     var f = e.target.files[0]; if (!f) return;
     setImporting(true);
     try {
-      var arrayBuf = await new Promise(function(res, rej) {
-        var r = new FileReader(); r.onload = function(){res(r.result);}; r.onerror = function(){rej(new Error("Erro"));}; r.readAsArrayBuffer(f);
-      });
-      var wb = XLSX.read(arrayBuf, {type:"array"});
-      var ws = wb.Sheets[wb.SheetNames[0]];
-      var raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
-
-      // Parse the table: find header row with profile names, then data rows
       var u = Object.assign({}, macroData);
       u.biasViews = Object.assign({}, u.biasViews || {});
       u.allocationTable = Object.assign({}, u.allocationTable || {});
 
-      // Send to AI to parse the complex table structure
-      var tableText = raw.map(function(row){return row.join("\t");}).join("\n");
+      var isImage = /\.(png|jpg|jpeg|gif|webp|bmp)$/i.test(f.name) || f.type.startsWith("image/");
+      var sysPrompt = 'Voce recebera uma tabela de alocacao por perfil de investidor. Extraia em JSON: {"views":{"Cash":-1,"Pós-fixado":-2,...},"allocations":{"Conservador||Cash":{"strategic":18,"tactical":16},"Conservador||Pós-fixado":{"strategic":35,"tactical":10},...}} Inclua TODOS os perfis (Conservador,Moderado,Dinâmico,Arrojado,Sofisticado,Defensivo,Intermediário,Longo Prazo) e TODAS as subclasses (Cash,Pós-fixado,Pré-fixado,IPCA+,FIIs,Alternativos,Ações Brasil,Equities Offshore,Credit Offshore). Views sao a coluna "View" com valores de -2 a +2. Strategic e Tactical sao as colunas "Estratégico" e "Tático" de cada perfil (numeros inteiros sem %). JSON puro sem markdown.';
+
+      var messages;
+
+      if (isImage) {
+        // Read as base64 for image upload
+        var b64 = await new Promise(function(res, rej) {
+          var r = new FileReader();
+          r.onload = function() { res(r.result.split(",")[1]); };
+          r.onerror = function() { rej(new Error("Erro leitura")); };
+          r.readAsDataURL(f);
+        });
+        var mimeType = f.type || "image/png";
+        messages = [{role:"user", content:[
+          {type:"image", source:{type:"base64", media_type:mimeType, data:b64}},
+          {type:"text", text:"Extraia todos os dados desta tabela de alocação no formato JSON solicitado."}
+        ]}];
+      } else {
+        // Excel file
+        var arrayBuf = await new Promise(function(res, rej) {
+          var r = new FileReader(); r.onload = function(){res(r.result);}; r.onerror = function(){rej(new Error("Erro"));}; r.readAsArrayBuffer(f);
+        });
+        var wb = XLSX.read(arrayBuf, {type:"array"});
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+        var tableText = raw.map(function(row){return row.join("\t");}).join("\n");
+        messages = [{role:"user", content:"Tabela:\n"+tableText}];
+      }
 
       var resp = await fetch("/api/anthropic", {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           model:"claude-sonnet-4-20250514", max_tokens:4096,
-          system:'Voce recebera uma tabela de alocacao por perfil de investidor. Extraia em JSON: {"views":{"Cash":-1,"Pós-fixado":-2,...},"allocations":{"Conservador||Cash":{"strategic":18,"tactical":16},"Conservador||Pós-fixado":{"strategic":35,"tactical":10},...}} Inclua TODOS os perfis (Conservador,Moderado,Dinâmico,Arrojado,Sofisticado,Defensivo,Intermediário,Longo Prazo) e TODAS as subclasses (Cash,Pós-fixado,Pré-fixado,IPCA+,FIIs,Alternativos,Ações Brasil,Equities Offshore,Credit Offshore). Views sao a coluna "View" com valores de -2 a +2. Strategic e Tactical sao as colunas "Estratégico" e "Tático" de cada perfil (numeros inteiros sem %). JSON puro sem markdown.',
-          messages:[{role:"user",content:"Tabela:\n"+tableText}]
+          system: sysPrompt,
+          messages: messages
         })
       });
       if (!resp.ok) throw new Error("API " + resp.status);
@@ -1144,8 +1163,8 @@ function MacroModal(p) {
                 <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>Escala: -2 (muito pessimista) a +2 (muito otimista)</div>
               </div>
               <label style={{padding:"7px 14px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",background:"rgba(251,191,36,0.06)",color:"#fbbf24",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>
-                {importing?"Importando...":"Importar Excel"}
-                <input ref={biasFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleBiasUpload} style={{display:"none"}}/>
+                {importing?"Importando...":"Importar Excel ou Imagem"}
+                <input ref={biasFileRef} type="file" accept=".xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" onChange={handleBiasUpload} style={{display:"none"}}/>
               </label>
             </div>
 
