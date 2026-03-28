@@ -1675,7 +1675,6 @@ function ConsultiveReportModal(p) {
   var [filterSentiment, setFilterSentiment] = useState("all");
   var [filterRank, setFilterRank] = useState("all");
   var [filterMargem, setFilterMargem] = useState("all");
-  var [genLoadingTicker, setGenLoadingTicker] = useState(null);
 
   var fileRef = useRef(null);
 
@@ -1914,31 +1913,51 @@ function ConsultiveReportModal(p) {
     return parts.join("\n");
   }
 
-  // ── Generate single asset analysis ──
-  async function generateSingleAnalysis(ticker) {
-    var asset = (crossrefData || []).find(function(c){return c.ticker === ticker;});
-    if (!asset) return;
-    setGenLoadingTicker(ticker); setError("");
+  // ── Generate batch analysis for selected assets ──
+  async function generateBatchAnalysis() {
+    var selected = (crossrefData || []).filter(function(c) { return selectedAssets[c.ticker]; });
+    if (selected.length === 0) return;
+    setGenerating(true); setError(""); setGenProgress("Preparando " + selected.length + " ativos...");
     try {
-      var ctx = { ticker: asset.ticker, name: asset.name, class: asset.class, suggestedValue: asset.suggestedValue, suggestedPercent: asset.suggestedPercent, currentPrice: asset.currentPrice, ceilingPrice: asset.ceilingPrice, deltaCeiling: asset.deltaCeiling, jbRationale: asset.rationale, currentQty: asset.currentQty, currentTotalValue: asset.currentTotalValue, hasPosition: asset.hasPosition };
-      if (asset.appMatch) ctx.appData = asset.appMatch;
-      if (asset.carteiraSuno) ctx.carteiraSuno = { rank: asset.carteiraSuno.rank, precoTeto: asset.carteiraSuno.precoTeto, vies: asset.carteiraSuno.vies, aloc: asset.carteiraSuno.aloc, carteira: asset.carteiraSuno.carteira };
+      var profileCtx = buildProfileContext();
+      var journeyCtx = buildJourneyContext();
+      var carteirasCtx = buildCarteirasContext();
+      var macroCtx = buildMacroCtxShort();
 
-      var sys = 'Voce e um consultor senior da Suno. Gere recomendacao CONCISA para 1 ativo usando todos os pilares (perfil, JB, inteligencia, macro, carteira Suno). Responda JSON puro: {"ticker":"","text":"","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR","priority":3} O campo "text": 1 PARAGRAFO (4-6 frases) com visao do momento, fundamentos recentes, recomendacao acionavel com VALOR de aporte se aplicavel. Direto, profissional, personalizado. Sem listas.';
-      var userMsg = buildProfileContext() + "\n" + buildJourneyContext() + "\n" + buildMacroCtxShort() + "\n" + buildCarteirasContext() + "\nCaixa: R$ " + (availableCash || "0") + "\nATIVO:\n" + JSON.stringify(ctx);
+      var assetsCtx = selected.map(function(a) {
+        var ctx = { ticker: a.ticker, name: a.name, class: a.class, suggestedValue: a.suggestedValue, suggestedPercent: a.suggestedPercent, currentPrice: a.currentPrice, ceilingPrice: a.ceilingPrice, deltaCeiling: a.deltaCeiling, jbRationale: a.rationale, currentQty: a.currentQty, currentTotalValue: a.currentTotalValue, hasPosition: a.hasPosition };
+        if (a.appMatch) ctx.appData = { result: a.appMatch.result, sunoView: a.appMatch.sunoView, sentiment: a.appMatch.sentiment, rankScore: a.appMatch.rankScore };
+        if (a.carteiraSuno) ctx.carteiraSuno = { rank: a.carteiraSuno.rank, precoTeto: a.carteiraSuno.precoTeto, vies: a.carteiraSuno.vies, carteira: a.carteiraSuno.carteira };
+        return ctx;
+      });
 
-      var resp = await fetch("/api/anthropic", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1024, system: sys, messages: [{role:"user", content: userMsg}] }) });
-      if (!resp.ok) throw new Error("API " + resp.status);
-      var d = await resp.json(); var raw = "";
-      for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
-      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-      var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
-      if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-      var parsed = JSON.parse(raw);
-      setAnalyses(function(prev) { var n = Object.assign({}, prev); n[ticker] = parsed; return n; });
-      setSelectedAssets(function(prev) { var n = Object.assign({}, prev); n[ticker] = true; return n; });
-    } catch(err) { console.error(err); setError("Erro " + ticker + ": " + err.message); }
-    setGenLoadingTicker(null);
+      var batchSize = 8;
+      var allResults = [];
+      for (var b = 0; b < assetsCtx.length; b += batchSize) {
+        var batch = assetsCtx.slice(b, b + batchSize);
+        var bn = Math.floor(b / batchSize) + 1;
+        var tb = Math.ceil(assetsCtx.length / batchSize);
+        setGenProgress("Lote " + bn + "/" + tb + " (" + batch.map(function(a){return a.ticker;}).join(", ") + ")...");
+
+        var sys = 'Voce e um consultor senior da Suno. Para CADA ativo, gere recomendacao CONCISA usando os pilares (perfil, JB, inteligencia, macro, carteira Suno). JSON puro: [{"ticker":"","text":"","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR","priority":3},...] Campo "text": 1 PARAGRAFO (4-6 frases) com visao, fundamentos, recomendacao com VALOR de aporte. Direto, profissional. Sem listas.';
+        var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa: R$ " + (availableCash || "0") + "\nATIVOS:\n" + JSON.stringify(batch);
+
+        var resp = await fetch("/api/anthropic", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4096, system: sys, messages: [{role:"user", content: userMsg}] }) });
+        if (!resp.ok) throw new Error("API " + resp.status);
+        var d = await resp.json(); var raw = "";
+        for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
+        raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+        var si = raw.indexOf("["); var ei = raw.lastIndexOf("]");
+        if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
+        allResults = allResults.concat(JSON.parse(raw));
+      }
+
+      var aMap = {};
+      allResults.forEach(function(a) { aMap[a.ticker] = a; });
+      setAnalyses(aMap);
+      setRecStep("review");
+    } catch(err) { console.error(err); setError("Erro: " + err.message); }
+    setGenerating(false); setGenProgress("");
   }
 
   function deselectAsset(ticker) {
@@ -2174,59 +2193,105 @@ function ConsultiveReportModal(p) {
                 {/* STEP 2: Select with filters */}
                 {recStep==="select"&&crossrefData&&(function(){
                   var cartNames=[];(carteirasData.carteiras||[]).forEach(function(cart){if((carteirasData.ativos[cart.id]||[]).length>0)cartNames.push(cart.name);});
+                  
+                  // Build class summary from JB + position
+                  var jbd = editingProfile ? editingProfile.jbData : null;
+                  var classMap = {"Renda Fixa":{jb:0,pos:0,tickers:[]},"Ações BR":{jb:0,pos:0,tickers:[]},"FIIs":{jb:0,pos:0,tickers:[]},"Internacional":{jb:0,pos:0,tickers:[]},"Alternativos":{jb:0,pos:0,tickers:[]}};
+                  var allocClasses = jbd && jbd.allocationMacro ? jbd.allocationMacro.classes : [];
+                  var allocMap = {"Renda Fixa":"Renda Fixa","Ações":"Ações BR","Acoes":"Ações BR","FIIs":"FIIs","Internacional":"Internacional","Alternativo":"Alternativos","Multimercado":"Alternativos"};
+                  allocClasses.forEach(function(ac){ var k = allocMap[ac.name]||ac.name; if(classMap[k]){classMap[k].jb=ac.suggestedPercent||0;} });
+                  // Calc pos totals
+                  var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+                  // Map each crossref asset to a class
+                  crossrefData.forEach(function(a){
+                    var cl = a.class||"";
+                    var mapped = "Alternativos";
+                    if(cl.indexOf("Renda")>=0||cl.indexOf("Fix")>=0||cl.indexOf("RF")>=0) mapped="Renda Fixa";
+                    else if(cl.indexOf("Aç")>=0||cl.indexOf("Ações")>=0||cl.indexOf("Equit")>=0) mapped="Ações BR";
+                    else if(cl.indexOf("FII")>=0||cl.indexOf("Imobili")>=0) mapped="FIIs";
+                    else if(cl.indexOf("Intern")>=0) mapped="Internacional";
+                    if(classMap[mapped]) classMap[mapped].tickers.push(a.ticker);
+                    if(a.hasPosition && posTotal > 0 && classMap[mapped]){
+                      classMap[mapped].pos += (a.currentTotalValue / posTotal * 100);
+                    }
+                  });
+                  // Also use profile allocation if available
+                  var profAlloc = editingProfile ? editingProfile.allocation : null;
+                  if(profAlloc){
+                    Object.keys(profAlloc).forEach(function(k){
+                      if(classMap[k] && profAlloc[k].current) classMap[k].pos = profAlloc[k].current;
+                      if(classMap[k] && profAlloc[k].target && classMap[k].jb === 0) classMap[k].jb = profAlloc[k].target;
+                    });
+                  }
+
                   var filtered=crossrefData.filter(function(c){
                     if(filterVies!=="all"){var v=c.carteiraSuno?c.carteiraSuno.vies:null;if(v!==filterVies)return false;}
                     if(filterCarteira!=="all"){var ca=c.carteiraSuno?c.carteiraSuno.carteira:null;if(ca!==filterCarteira)return false;}
-                    if(filterClasse!=="all"){var cl=c.class||"";if(filterClasse==="Ações"&&cl.indexOf("Aç")<0&&cl.indexOf("Ações")<0)return false;if(filterClasse==="FIIs"&&cl.indexOf("FII")<0&&cl.indexOf("Imobili")<0)return false;if(filterClasse==="RF"&&cl.indexOf("Renda")<0&&cl.indexOf("Fix")<0)return false;if(filterClasse==="Internacional"&&cl.indexOf("Intern")<0)return false;}
+                    if(filterClasse!=="all"){var cl=c.class||"";if(filterClasse==="Ações BR"&&cl.indexOf("Aç")<0&&cl.indexOf("Ações")<0)return false;if(filterClasse==="FIIs"&&cl.indexOf("FII")<0&&cl.indexOf("Imobili")<0)return false;if(filterClasse==="Renda Fixa"&&cl.indexOf("Renda")<0&&cl.indexOf("Fix")<0)return false;if(filterClasse==="Internacional"&&cl.indexOf("Intern")<0)return false;}
                     if(filterSentiment!=="all"&&c.appMatch&&c.appMatch.sentiment!==filterSentiment)return false;
                     if(filterRank!=="all"&&c.carteiraSuno){var r=c.carteiraSuno.rank||999;if(filterRank==="top5"&&r>5)return false;if(filterRank==="top10"&&r>10)return false;}
                     if(filterMargem!=="all"&&c.deltaCeiling!=null){if(filterMargem==="desconto"&&c.deltaCeiling<=0)return false;if(filterMargem==="desconto20"&&c.deltaCeiling<=20)return false;}
                     return true;
                   });
                   var selCt=Object.keys(selectedAssets).length;
+
                   return <div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                      <span style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>Selecionar Ativos — {selCt} selecionados</span>
-                    </div>
-                    <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"10px"}}>
-                      <select value={filterVies} onChange={function(e){setFilterVies(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Viés: Todos</option><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option></select>
-                      <select value={filterCarteira} onChange={function(e){setFilterCarteira(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Carteira: Todas</option>{cartNames.map(function(cn){return <option key={cn} value={cn}>{cn}</option>;})}</select>
-                      <select value={filterClasse} onChange={function(e){setFilterClasse(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Classe: Todas</option><option value="Ações">Ações</option><option value="FIIs">FIIs</option><option value="RF">Renda Fixa</option><option value="Internacional">Internacional</option></select>
-                      <select value={filterSentiment} onChange={function(e){setFilterSentiment(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Sentimento: Todos</option><option value="positive">Positivo</option><option value="neutral">Neutro</option><option value="negative">Negativo</option></select>
-                      <select value={filterRank} onChange={function(e){setFilterRank(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Rank: Todos</option><option value="top5">Top 5</option><option value="top10">Top 10</option></select>
-                      <select value={filterMargem} onChange={function(e){setFilterMargem(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Margem: Todas</option><option value="desconto">Com desconto</option><option value="desconto20">&gt;20% desconto</option></select>
-                    </div>
-                    <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",marginBottom:"6px"}}>{filtered.length} visíveis · Clique "Gerar" para a IA criar a recomendação do ativo</div>
-                    <div style={{maxHeight:"380px",overflow:"auto",marginBottom:"12px",border:"1px solid rgba(255,255,255,0.04)",borderRadius:"8px"}}>
-                      {filtered.map(function(c){
-                        var isSel=!!selectedAssets[c.ticker];var hasAn=!!analyses[c.ticker];var isLoad=genLoadingTicker===c.ticker;
-                        var vC=c.carteiraSuno?({"Comprar":"#4ade80","Aguardar":"#fbbf24","Vender":"#f87171"}[c.carteiraSuno.vies]||"#94a3b8"):"#94a3b8";
-                        return <div key={c.ticker} style={{padding:"8px 10px",borderBottom:"1px solid rgba(255,255,255,0.03)",background:isSel?"rgba(220,38,38,0.04)":"transparent",borderLeft:isSel?"2px solid #DC2626":"2px solid transparent"}}>
-                          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                            <div style={{display:"flex",alignItems:"center",gap:"6px",flex:1,flexWrap:"wrap"}}>
-                              <span style={{fontWeight:700,fontSize:"12px",color:isSel?"#DC2626":"#f1f5f9",minWidth:"55px"}}>{c.ticker}</span>
-                              <span style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>{c.name}</span>
-                              {c.carteiraSuno&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:vC+"18",color:vC,fontWeight:600}}>#{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
-                              {c.carteiraSuno&&c.carteiraSuno.carteira&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(59,130,246,0.08)",color:"#60a5fa"}}>{c.carteiraSuno.carteira}</span>}
-                              {c.appMatch&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:c.appMatch.sentiment==="positive"?"rgba(74,222,128,0.1)":c.appMatch.sentiment==="negative"?"rgba(248,113,113,0.1)":"rgba(255,255,255,0.04)",color:c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8"}}>{c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1)+" ":""}{c.appMatch.sentiment==="positive"?"▲":c.appMatch.sentiment==="negative"?"▼":"●"}</span>}
-                              {c.deltaCeiling!=null&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:c.deltaCeiling>0?"rgba(74,222,128,0.08)":"rgba(248,113,113,0.08)",color:c.deltaCeiling>0?"#4ade80":"#f87171",fontWeight:600}}>{c.deltaCeiling>0?"+":""}{c.deltaCeiling}% teto</span>}
-                            </div>
-                            <div style={{display:"flex",gap:"4px",alignItems:"center",flexShrink:0}}>
-                              {isSel&&hasAn&&!isLoad&&<button onClick={function(){deselectAsset(c.ticker);}} style={{fontSize:"9px",padding:"4px 8px",borderRadius:"5px",border:"1px solid rgba(220,38,38,0.2)",background:"transparent",color:"rgba(220,38,38,0.6)",cursor:"pointer",fontWeight:600}}>✕</button>}
-                              {!isSel&&!isLoad&&<button onClick={function(){generateSingleAnalysis(c.ticker);}} style={{fontSize:"9px",padding:"4px 10px",borderRadius:"5px",border:"none",background:"#DC2626",color:"#fff",cursor:"pointer",fontWeight:700}}>Gerar</button>}
-                              {isLoad&&<span style={{fontSize:"9px",color:"#fbbf24",fontWeight:600}}>Gerando...</span>}
-                            </div>
+                    {/* CLASS DASHBOARD - JB vs Posição */}
+                    <div style={{display:"flex",gap:"4px",marginBottom:"12px",flexWrap:"wrap"}}>
+                      {Object.keys(classMap).map(function(cls){
+                        var cm=classMap[cls]; var diff=cm.jb-cm.pos; var isActive=filterClasse===cls;
+                        var diffColor=diff>3?"#4ade80":diff<-3?"#f87171":"#94a3b8";
+                        return <div key={cls} onClick={function(){setFilterClasse(isActive?"all":cls);}} style={{flex:1,minWidth:"100px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",background:isActive?"rgba(220,38,38,0.1)":"rgba(255,255,255,0.02)",border:isActive?"1px solid rgba(220,38,38,0.3)":"1px solid rgba(255,255,255,0.05)",textAlign:"center"}}>
+                          <div style={{fontSize:"9px",fontWeight:700,color:isActive?"#DC2626":"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"4px"}}>{cls}</div>
+                          <div style={{display:"flex",justifyContent:"center",gap:"8px",alignItems:"baseline"}}>
+                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#60a5fa"}}>{cm.jb.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.25)"}}>JB Meta</div></div>
+                            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.15)"}}>→</div>
+                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#fbbf24"}}>{cm.pos.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.25)"}}>Atual</div></div>
                           </div>
-                          {isSel&&hasAn&&<div style={{marginTop:"6px",padding:"8px 10px",background:"rgba(255,255,255,0.02)",borderRadius:"6px",fontSize:"11px",color:"rgba(255,255,255,0.55)",lineHeight:1.6}}>
-                            <span style={{fontSize:"9px",fontWeight:700,color:({"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24"}[analyses[c.ticker].verdict]||"#888"),marginRight:"6px"}}>{analyses[c.ticker].verdict}</span>
-                            {analyses[c.ticker].text||""}
-                          </div>}
+                          <div style={{fontSize:"9px",fontWeight:700,color:diffColor,marginTop:"2px"}}>{diff>0?"+":""}{diff.toFixed(0)}pp {diff>3?"sub-alocado":diff<-3?"sobre-alocado":"ok"}</div>
+                          <div style={{fontSize:"8px",color:"rgba(255,255,255,0.15)",marginTop:"2px"}}>{cm.tickers.length} ativos</div>
                         </div>;
                       })}
                     </div>
+
+                    {/* Filters row */}
+                    <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px"}}>
+                      <select value={filterVies} onChange={function(e){setFilterVies(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Viés: Todos</option><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option></select>
+                      <select value={filterCarteira} onChange={function(e){setFilterCarteira(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Carteira: Todas</option>{cartNames.map(function(cn){return <option key={cn} value={cn}>{cn}</option>;})}</select>
+                      <select value={filterSentiment} onChange={function(e){setFilterSentiment(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Sentimento: Todos</option><option value="positive">Positivo</option><option value="neutral">Neutro</option><option value="negative">Negativo</option></select>
+                      <select value={filterRank} onChange={function(e){setFilterRank(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Rank: Todos</option><option value="top5">Top 5</option><option value="top10">Top 10</option></select>
+                      <select value={filterMargem} onChange={function(e){setFilterMargem(e.target.value);}} style={{background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"4px 8px",color:"#e2e8f0",fontSize:"9px",outline:"none"}}><option value="all">Margem: Todas</option><option value="desconto">Com desconto</option><option value="desconto20">&gt;20%</option></select>
+                    </div>
+
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+                      <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>{filtered.length} visíveis · {selCt} selecionados</span>
+                      <div style={{display:"flex",gap:"4px"}}>
+                        <button onClick={function(){var sel={};filtered.forEach(function(c){sel[c.ticker]=true;});setSelectedAssets(function(prev){return Object.assign({},prev,sel);});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Sel. visíveis</button>
+                        <button onClick={function(){setSelectedAssets({});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(220,38,38,0.15)",background:"transparent",color:"rgba(220,38,38,0.4)",cursor:"pointer"}}>Limpar</button>
+                      </div>
+                    </div>
+
+                    {/* Asset list with checkboxes */}
+                    <div style={{maxHeight:"340px",overflow:"auto",marginBottom:"12px",border:"1px solid rgba(255,255,255,0.04)",borderRadius:"8px"}}>
+                      {filtered.map(function(c){
+                        var isSel=!!selectedAssets[c.ticker];
+                        var vC=c.carteiraSuno?({"Comprar":"#4ade80","Aguardar":"#fbbf24","Vender":"#f87171"}[c.carteiraSuno.vies]||"#94a3b8"):"#94a3b8";
+                        return <div key={c.ticker} style={{padding:"6px 10px",borderBottom:"1px solid rgba(255,255,255,0.03)",background:isSel?"rgba(220,38,38,0.04)":"transparent",display:"flex",alignItems:"center",gap:"8px"}}>
+                          <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
+                          <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",minWidth:"50px"}}>{c.ticker}</span>
+                          <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                          {c.carteiraSuno&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:vC+"18",color:vC,fontWeight:600,flexShrink:0}}>#{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
+                          {c.appMatch&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:c.appMatch.sentiment==="positive"?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8",flexShrink:0}}>{c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1):""}</span>}
+                          {c.deltaCeiling!=null&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",color:c.deltaCeiling>0?"#4ade80":"#f87171",fontWeight:600,flexShrink:0}}>{c.deltaCeiling>0?"+":""}{c.deltaCeiling}%</span>}
+                          {c.hasPosition&&<span style={{fontSize:"7px",color:"#fbbf24",flexShrink:0}}>●</span>}
+                        </div>;
+                      })}
+                    </div>
+
+                    {/* Actions */}
                     <div style={{display:"flex",gap:"8px"}}>
                       <button onClick={function(){setRecStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
-                      <button onClick={function(){setRecStep("review");}} disabled={selCt===0} style={Object.assign({},btnBase,{flex:1,background:selCt>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCt>0?"#fff":"rgba(255,255,255,0.3)"})}>Revisar ({selCt}) →</button>
+                      <button onClick={function(){generateBatchAnalysis();}} disabled={selCt===0||generating} style={Object.assign({},btnBase,{flex:1,background:selCt>0&&!generating?"#DC2626":"rgba(255,255,255,0.05)",color:selCt>0&&!generating?"#fff":"rgba(255,255,255,0.3)"})}>{generating?genProgress:("Gerar Recomendações ("+selCt+") →")}</button>
                     </div>
                   </div>;
                 })()}
