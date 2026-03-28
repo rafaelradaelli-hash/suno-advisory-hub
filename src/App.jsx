@@ -2632,8 +2632,8 @@ function ConsultiveReportModal(p) {
                       if (/PRE.?FIX|PREFIXAD|LTN|TESOURO PRE/i.test(fullName)) return "Pré-fixado";
                       // Inflação: IPCA+, NTN-B, Tesouro IPCA, inflação
                       if (/IPCA|INFLAC|NTN.?B|TESOURO IPCA/i.test(fullName)) return "IPCA+";
-                      // Pós-fixado: CDI, Selic, DI, LCA, LCI, CDB (sem IPCA/Pré)
-                      if (/CDI|SELIC|DI |% DI|BANCO|LCA |LCI |CDB /i.test(fullName)) return "Pós-fixado";
+                      // Pós-fixado: CDI, Selic, DI, Tesouro Selic, LCA, LCI, CDB, fundos RF
+                      if (/CDI|SELIC|TESOURO SELIC|DI |% DI|BANCO|LCA |LCI |CDB |CLASSE|COTAS|FUNDO|RF|RENDA FIXA/i.test(fullName)) return "Pós-fixado";
                       // Sub-classe do Excel diz algo específico?
                       if(sc.indexOf("inflac")>=0||sc.indexOf("ipca")>=0) return "IPCA+";
                       if(sc.indexOf("pre")>=0&&sc.indexOf("fix")>=0) return "Pré-fixado";
@@ -2661,11 +2661,59 @@ function ConsultiveReportModal(p) {
                   var subclassData = {};
                   ALL_BIAS_ITEMS.forEach(function(item){ subclassData[item] = {jb:0, pos:0, posValue:0, assets:[]}; });
 
-                  // JB meta by subclass (from allocationTable if available)
+                  // JB meta by subclass - distribute RF among Pós/IPCA+/Pré using JB assets
                   var jbd = editingProfile ? editingProfile.jbData : null;
                   var allocClasses = jbd && jbd.allocationMacro ? jbd.allocationMacro.classes : [];
-                  var jbMap = {"Renda Fixa":"Pós-fixado","Ações":"Ações Brasil","FIIs":"FIIs","Internacional":"Equities Offshore","Alternativo":"Alternativos","Caixa":"Cash"};
-                  allocClasses.forEach(function(ac){ var k=jbMap[ac.name]||ac.name; if(subclassData[k]) subclassData[k].jb=ac.suggestedPercent||0; });
+                  
+                  // Simple mapping for non-RF classes
+                  var jbMapSimple = {"Ações":"Ações Brasil","FIIs":"FIIs","Internacional":"Equities Offshore","Alternativo":"Alternativos","Caixa":"Cash","Multimercado":"Alternativos"};
+                  
+                  allocClasses.forEach(function(ac) {
+                    var name = ac.name || "";
+                    var pct = ac.suggestedPercent || 0;
+                    
+                    if (name === "Renda Fixa" || name.indexOf("Renda Fixa") >= 0) {
+                      // Distribute RF among subclasses using JB suggestedPortfolio
+                      var rfAssets = (jbd && jbd.suggestedPortfolio || []).filter(function(a) {
+                        var cl = (a.class||"").toLowerCase();
+                        return cl.indexOf("renda fixa") >= 0 || cl.indexOf("rf") >= 0 || cl.indexOf("fix") >= 0 || cl.indexOf("crédito") >= 0 || cl.indexOf("credito") >= 0;
+                      });
+                      
+                      if (rfAssets.length > 0) {
+                        // Calculate total RF value from JB to get proportions
+                        var rfTotal = rfAssets.reduce(function(s,a){return s+(a.value||a.percentPortfolio||0);},0);
+                        var posGroup = {pos:0, ipca:0, pre:0, cash:0};
+                        
+                        rfAssets.forEach(function(a) {
+                          var subCl = (a.subclass||a.name||"").toLowerCase();
+                          var tk = (a.ticker||a.name||"").toUpperCase();
+                          var val = a.value || a.percentPortfolio || 0;
+                          
+                          if (subCl.indexOf("caixa") >= 0 || tk.indexOf("CAIXA") >= 0) posGroup.cash += val;
+                          else if (/ipca|inflac|ntn.?b|tesouro ipca/i.test(tk) || /ipca|inflac/i.test(subCl)) posGroup.ipca += val;
+                          else if (/pre.?fix|prefixad|ltn|tesouro pre/i.test(tk) || /pre.?fix/i.test(subCl)) posGroup.pre += val;
+                          else posGroup.pos += val; // CDI, Selic, DI, LCA, LCI, CDB
+                        });
+                        
+                        if (rfTotal > 0) {
+                          subclassData["Cash"].jb = pct * (posGroup.cash / rfTotal);
+                          subclassData["Pós-fixado"].jb = pct * (posGroup.pos / rfTotal);
+                          subclassData["IPCA+"].jb = pct * (posGroup.ipca / rfTotal);
+                          subclassData["Pré-fixado"].jb = pct * (posGroup.pre / rfTotal);
+                        } else {
+                          // Fallback: all to Pós-fixado
+                          subclassData["Pós-fixado"].jb = pct;
+                        }
+                      } else {
+                        // No RF assets in JB portfolio, check if profile has allocation detail
+                        subclassData["Pós-fixado"].jb = pct;
+                      }
+                    } else {
+                      // Non-RF classes
+                      var k = jbMapSimple[name] || name;
+                      if (subclassData[k]) subclassData[k].jb = pct;
+                    }
+                  });
 
                   // Position from Excel
                   posAssets.forEach(function(pa){
