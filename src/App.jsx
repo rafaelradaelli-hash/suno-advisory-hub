@@ -792,6 +792,8 @@ function makeEmptyProfile() {
       "Internacional": {target: 20, current: 0},
       "Alternativos": {target: 5, current: 0}
     },
+    jbData: null, // Journey Book data saved permanently
+    jbImportDate: null,
     createdAt: new Date().toISOString().slice(0,10),
     updatedAt: new Date().toISOString().slice(0,10)
   };
@@ -1630,51 +1632,47 @@ function CarteirasModal(p) {
   );
 }
 
-/* ─── Consultive Report Module v2 — Tripod Architecture ─── */
-var CONSULT_STEPS = ["profile","journey","position","crossref","generate","review","pdf"];
-var STEP_LABELS = {profile:"1. Cliente",journey:"2. Journey Book",position:"3. Posição Atual",crossref:"4. Cruzamento",generate:"5. Análise IA",review:"6. Revisar",pdf:"7. PDF"};
+/* ─── Consultive Report Module v3 — 2 Sub-abas (Estratégia + Recomendação) ─── */
+var CONSULT_TAB_STRATEGY = "strategy";
+var CONSULT_TAB_RECOMMEND = "recommend";
+var REC_STEPS = ["position","crossref","generate","review","pdf"];
+var REC_STEP_LABELS = {position:"1. Posição",crossref:"2. Cruzamento",generate:"3. Análise IA",review:"4. Revisar",pdf:"5. PDF"};
 
 function ConsultiveReportModal(p) {
-  var [step, setStep] = useState("profile");
+  var [mainTab, setMainTab] = useState(CONSULT_TAB_STRATEGY);
   var [consultorName, setConsultorName] = useState("Rafael Manfroi Radaelli");
   var [period, setPeriod] = useState("");
   var [error, setError] = useState("");
 
-  // Pilar 3 — Client Profile
+  // Client profiles
   var [clientProfiles, setClientProfiles] = useState(function(){return loadClientProfiles();});
   var [selectedProfileId, setSelectedProfileId] = useState("");
   var [editingProfile, setEditingProfile] = useState(null);
   var [showProfileEditor, setShowProfileEditor] = useState(false);
 
-  // Pilar 2 — Journey Book
+  // Strategy tab — JB
   var [jbFile, setJbFile] = useState(null);
   var [jbFileName, setJbFileName] = useState("");
   var [jbParsing, setJbParsing] = useState(false);
-  var [jbData, setJbData] = useState(null); // parsed journey book data
 
-  // Pilar 1+2+3 — Crossref
-  var [crossrefData, setCrossrefData] = useState(null);
-  var [selectedAssets, setSelectedAssets] = useState({});
-
-  // Position — Current portfolio
+  // Recommendation tab
+  var [recStep, setRecStep] = useState("position");
   var [posFile, setPosFile] = useState(null);
   var [posFileName, setPosFileName] = useState("");
   var [posAssets, setPosAssets] = useState([]);
   var [availableCash, setAvailableCash] = useState("");
   var posFileRef = useRef(null);
-
-  // Generation
+  var [crossrefData, setCrossrefData] = useState(null);
+  var [selectedAssets, setSelectedAssets] = useState({});
   var [generating, setGenerating] = useState(false);
   var [genProgress, setGenProgress] = useState("");
   var [analyses, setAnalyses] = useState({});
   var [strategyText, setStrategyText] = useState("");
-
-  // PDF
   var [pdfGenerating, setPdfGenerating] = useState(false);
 
   var fileRef = useRef(null);
 
-  // All app stocks
+  // All app stocks (Pilar 1 — Inteligência)
   var allAppStocks = [];
   ["Dividendos","Valor","Small Caps","Internacional"].forEach(function(port) {
     (p.data[port] || []).forEach(function(s) {
@@ -1682,44 +1680,45 @@ function ConsultiveReportModal(p) {
     });
   });
 
+  // Load Carteiras Suno data (Pilar 5)
+  var carteirasData = loadCarteiras();
+
   // ── Profile functions ──
   function selectProfile(id) {
     setSelectedProfileId(id);
     var found = clientProfiles.find(function(pr){return pr.id===id;});
     if (found) { setEditingProfile(Object.assign({}, found)); }
     else { setEditingProfile(null); }
+    setError("");
   }
-  function saveProfileInline() {
-    if (!editingProfile) return;
+  function saveProfileToList(profile) {
     var list = clientProfiles.slice();
-    var idx = list.findIndex(function(pr){return pr.id===editingProfile.id;});
-    if (idx >= 0) list[idx] = editingProfile; else list.push(editingProfile);
+    var idx = list.findIndex(function(pr){return pr.id===profile.id;});
+    if (idx >= 0) list[idx] = profile; else list.push(profile);
     setClientProfiles(list); saveClientProfiles(list);
+    setEditingProfile(Object.assign({}, profile));
   }
   function createNewProfileInline() {
     var np = makeEmptyProfile();
     setSelectedProfileId(np.id); setEditingProfile(np); setShowProfileEditor(true);
   }
 
-  // ── Journey Book parsing via AI ──
+  // ── Journey Book parsing (saves to profile) ──
   function handleJBUpload(e) {
     var f = e.target.files[0]; if (!f) return;
-    setJbFileName(f.name); setJbFile(f); setJbData(null); setError("");
+    setJbFileName(f.name); setJbFile(f); setError("");
   }
 
   async function parseJourneyBook() {
-    if (!jbFile) return;
+    if (!jbFile || !editingProfile) return;
     setJbParsing(true); setError("");
     try {
-      // Extract text from PDF in browser using pdf.js
       var arrayBuf = await new Promise(function(res, rej) {
         var r = new FileReader();
         r.onload = function() { res(r.result); };
         r.onerror = function() { rej(new Error("Erro leitura")); };
         r.readAsArrayBuffer(jbFile);
       });
-
-      // Load pdf.js from CDN if not loaded
       if (!window.pdfjsLib) {
         await new Promise(function(res, rej) {
           var s = document.createElement("script");
@@ -1729,7 +1728,6 @@ function ConsultiveReportModal(p) {
         });
         window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
       }
-
       var pdf = await window.pdfjsLib.getDocument({data: arrayBuf}).promise;
       var allText = "";
       for (var pg = 1; pg <= pdf.numPages; pg++) {
@@ -1738,10 +1736,8 @@ function ConsultiveReportModal(p) {
         var pageText = tc.items.map(function(item){return item.str;}).join(" ");
         if (pageText.trim()) allText += "\n\n--- PAGINA " + pg + " ---\n" + pageText;
       }
+      if (allText.length < 200) throw new Error("PDF parece ser apenas imagens.");
 
-      if (allText.length < 200) throw new Error("PDF parece ser apenas imagens (sem texto extraível). Tente um PDF com texto selecionável.");
-
-      // Send extracted text to AI (much smaller than base64 PDF)
       var sys = 'Voce e um parser de documentos financeiros. Recebera o TEXTO EXTRAIDO de um Journey Book (PDF) da Suno Consultoria. Extraia TODAS as informacoes estruturadas em JSON com esta estrutura EXATA:'
         + ' {"clientInfo":{"name":"","age":0,"profession":"","riskProfile":"","patrimony":0,"monthlyIncome":0,"monthlyExpenses":0,"monthlyContribution":0,"horizon":"","objective":"","desiredIncome":0,"liquidityNeed":""},'
         + '"projections":{"retirementAge":0,"capitalAtRetirement":0,"percentMeta":0,"realReturnRate":"","estimatedCurrentIncome":0,"estimatedRetirementIncome":0,"requiredContribution":0,"ageForMeta":"","evolutionTable":[{"date":"","patrimony":0,"percentMeta":0,"age":0}]},'
@@ -1751,82 +1747,69 @@ function ConsultiveReportModal(p) {
         + '"movements":{"sells":[{"ticker":"","value":0,"qty":0}],"buys":[{"ticker":"","value":0,"qty":0}]},'
         + '"assetRationales":[{"ticker":"","class":"","sector":"","currentPrice":0,"ceilingPrice":0,"deltaCeiling":0,"rationale":""}],'
         + '"feeFix":{"value":0,"percent":"","asset":""}}'
-        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes (RF, Acoes, FIIs, Internacional, Alternativo). 2) Para precos-teto, extraia o valor exato. 3) deltaCeiling em percentual. 4) Valores monetarios sem R$ e sem pontos de milhar, use numero puro (ex: 1160837). 5) Percentuais como numeros (ex: 63 nao "63%"). 6) Se um campo nao existe no texto, use null. 7) Responda SOMENTE com JSON puro, sem markdown.';
+        + ' REGRAS: 1) Extraia TODOS os ativos de TODAS as classes. 2) Valores monetarios sem R$, numero puro. 3) Percentuais como numeros. 4) Se campo nao existe, use null. 5) JSON puro sem markdown.';
 
       var resp = await fetch("/api/anthropic", {
         method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 8192,
-          system: sys,
-          messages: [{role:"user", content: "TEXTO DO JOURNEY BOOK (" + pdf.numPages + " paginas):\n" + allText.slice(0, 80000)}]
-        })
+        body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 8192, system: sys, messages: [{role:"user", content: "TEXTO DO JOURNEY BOOK (" + pdf.numPages + " paginas):\n" + allText.slice(0, 80000)}] })
       });
-      if (!resp.ok) { var eb = await resp.text(); throw new Error("API " + resp.status + ": " + eb.slice(0,300)); }
+      if (!resp.ok) throw new Error("API " + resp.status);
       var d = await resp.json();
       var raw = "";
       for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
       raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
       var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
       if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-      // Fix common JSON issues from AI output
-      raw = raw.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]"); // trailing commas
-      raw = raw.replace(/\n/g, " ").replace(/\t/g, " "); // newlines in strings
-      raw = raw.replace(/[\x00-\x1F\x7F]/g, " "); // control characters
+      raw = raw.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]").replace(/\n/g, " ").replace(/\t/g, " ").replace(/[\x00-\x1F\x7F]/g, " ");
       var parsed;
       try { parsed = JSON.parse(raw); } catch(jsonErr) {
-        // Try to salvage by finding the main object boundaries more carefully
-        console.warn("JSON parse failed, attempting repair:", jsonErr.message);
-        // Attempt: close any unclosed arrays/objects
-        var openBraces = (raw.match(/{/g)||[]).length;
-        var closeBraces = (raw.match(/}/g)||[]).length;
-        var openBrackets = (raw.match(/\[/g)||[]).length;
-        var closeBrackets = (raw.match(/\]/g)||[]).length;
         var repaired = raw;
-        for (var bi = 0; bi < openBrackets - closeBrackets; bi++) repaired += "]";
-        for (var bri = 0; bri < openBraces - closeBraces; bri++) repaired += "}";
+        var ob = (raw.match(/{/g)||[]).length; var cb = (raw.match(/}/g)||[]).length;
+        var oB = (raw.match(/\[/g)||[]).length; var cB = (raw.match(/\]/g)||[]).length;
+        for (var bi = 0; bi < oB - cB; bi++) repaired += "]";
+        for (var bri = 0; bri < ob - cb; bri++) repaired += "}";
         repaired = repaired.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]");
-        try { parsed = JSON.parse(repaired); } catch(e2) {
-          // Last resort: try to extract at least partial data
-          console.error("JSON repair also failed:", e2.message);
-          throw new Error("A IA retornou dados incompletos. Tente processar novamente.");
-        }
+        parsed = JSON.parse(repaired);
       }
-      setJbData(parsed);
 
-      // Auto-fill profile from JB if profile is empty
-      if (editingProfile && !editingProfile.name && parsed.clientInfo) {
+      // Save JB to profile permanently
+      var updated = Object.assign({}, editingProfile, {jbData: parsed, jbImportDate: new Date().toISOString().slice(0,10)});
+      // Auto-fill profile fields from JB
+      if (parsed.clientInfo) {
         var ci = parsed.clientInfo;
-        var updated = Object.assign({}, editingProfile, {
-          name: ci.name || editingProfile.name,
-          age: ci.age ? String(ci.age) : editingProfile.age,
-          profession: ci.profession || editingProfile.profession,
-          riskProfile: ci.riskProfile || editingProfile.riskProfile,
-          totalWealth: ci.patrimony ? String(ci.patrimony) : editingProfile.totalWealth,
-          monthlyIncome: ci.monthlyIncome ? String(ci.monthlyIncome) : editingProfile.monthlyIncome,
-          monthlyContribution: ci.monthlyContribution ? String(ci.monthlyContribution) : editingProfile.monthlyContribution,
-          horizon: ci.horizon || editingProfile.horizon,
-          longTermGoals: ci.objective ? ci.objective + (ci.desiredIncome ? ". Renda desejada: R$ " + ci.desiredIncome.toLocaleString("pt-BR") : "") : editingProfile.longTermGoals
-        });
-        // Update allocation from JB macro
-        if (parsed.allocationMacro && parsed.allocationMacro.classes) {
-          var allocMap = {"Renda Fixa":"Renda Fixa","Ações":"Ações BR","Acoes":"Ações BR","FIIs":"FIIs","Internacional":"Internacional","Alternativo":"Alternativos","Multimercado":"Alternativos"};
-          var newAlloc = Object.assign({}, updated.allocation || {});
-          parsed.allocationMacro.classes.forEach(function(c) {
-            var mapped = allocMap[c.name] || c.name;
-            if (newAlloc[mapped]) {
-              newAlloc[mapped] = {target: c.suggestedPercent || 0, current: c.currentPercent || 0};
-            }
-          });
-          updated.allocation = newAlloc;
-        }
-        setEditingProfile(updated);
+        if (!updated.name && ci.name) updated.name = ci.name;
+        if (!updated.age && ci.age) updated.age = String(ci.age);
+        if (!updated.profession && ci.profession) updated.profession = ci.profession;
+        if (ci.riskProfile) updated.riskProfile = ci.riskProfile;
+        if (!updated.totalWealth && ci.patrimony) updated.totalWealth = String(ci.patrimony);
+        if (!updated.monthlyIncome && ci.monthlyIncome) updated.monthlyIncome = String(ci.monthlyIncome);
+        if (!updated.monthlyContribution && ci.monthlyContribution) updated.monthlyContribution = String(ci.monthlyContribution);
+        if (ci.horizon) updated.horizon = String(ci.horizon);
+        if (ci.objective) updated.longTermGoals = ci.objective + (ci.desiredIncome ? ". Renda desejada: R$ " + ci.desiredIncome.toLocaleString("pt-BR") : "");
       }
-
-    } catch(err) { console.error(err); setError("Erro ao processar Journey Book: " + err.message); }
+      if (parsed.allocationMacro && parsed.allocationMacro.classes) {
+        var allocMap = {"Renda Fixa":"Renda Fixa","Ações":"Ações BR","Acoes":"Ações BR","FIIs":"FIIs","Internacional":"Internacional","Alternativo":"Alternativos","Multimercado":"Alternativos"};
+        var newAlloc = Object.assign({}, updated.allocation || {});
+        parsed.allocationMacro.classes.forEach(function(c) {
+          var mapped = allocMap[c.name] || c.name;
+          if (newAlloc[mapped]) newAlloc[mapped] = {target: c.suggestedPercent || 0, current: c.currentPercent || 0};
+        });
+        updated.allocation = newAlloc;
+      }
+      updated.updatedAt = new Date().toISOString().slice(0,10);
+      saveProfileToList(updated);
+      setJbFile(null); setJbFileName("");
+    } catch(err) { console.error(err); setError("Erro ao processar JB: " + err.message); }
     setJbParsing(false);
   }
 
-  // ── Position — Current portfolio upload ──
+  function clearJB() {
+    if (!editingProfile || !confirm("Remover Journey Book salvo deste cliente?")) return;
+    var updated = Object.assign({}, editingProfile, {jbData: null, jbImportDate: null});
+    saveProfileToList(updated);
+  }
+
+  // ── Position upload ──
   async function handlePosUpload(e) {
     var f = e.target.files[0]; if (!f) return;
     setPosFileName(f.name); setPosFile(f); setError("");
@@ -1853,15 +1836,13 @@ function ConsultiveReportModal(p) {
       var currentPriceCol = findCol(["preco atual","preco_atual","cotacao","current","ultimo"]);
       var totalCol = findCol(["total atual","valor atual","total_atual","saldo","valor","financeiro"]);
       var typeCol = findCol(["tipo","type","classe","categoria","asset"]);
-
       var assets = [];
       for (var ri = 0; ri < raw.length; ri++) {
         var row = raw[ri];
         var tk = String(row[tickerCol] || "").trim().toUpperCase();
         if (!tk || tk === "TOTAL" || tk === "SUBTOTAL" || tk.length < 2) continue;
         assets.push({
-          ticker: tk,
-          name: nameCol ? String(row[nameCol] || "") : "",
+          ticker: tk, name: nameCol ? String(row[nameCol] || "") : "",
           qty: qtyCol ? parseFloat(String(row[qtyCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
           avgPrice: avgPriceCol ? parseFloat(String(row[avgPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
           currentPrice: currentPriceCol ? parseFloat(String(row[currentPriceCol]).replace(/[^\d,.-]/g,"").replace(",",".")) || 0 : 0,
@@ -1873,86 +1854,67 @@ function ConsultiveReportModal(p) {
     } catch(err) { setError("Erro ao ler Excel: " + err.message); }
   }
 
-  // ── Crossref ──
+  // ── Crossref (now uses saved jbData from profile) ──
   function buildCrossref() {
+    var jbData = editingProfile ? editingProfile.jbData : null;
     if (!jbData) return;
     var suggested = jbData.suggestedPortfolio || [];
     var rationales = jbData.assetRationales || [];
     var movements = jbData.movements || {sells:[],buys:[]};
 
+    // Build carteiras lookup
+    var cartLookup = {};
+    (carteirasData.carteiras || []).forEach(function(cart) {
+      (carteirasData.ativos[cart.id] || []).forEach(function(a) {
+        cartLookup[a.ticker] = Object.assign({carteira: cart.name, intl: cart.intl}, a);
+      });
+    });
+
     var crossref = suggested.map(function(asset) {
-      // Find in app data (Pilar 1)
       var appMatch = null;
       for (var i = 0; i < allAppStocks.length; i++) {
         if (allAppStocks[i].ticker === asset.ticker) { appMatch = allAppStocks[i]; break; }
       }
-      // Find rationale from JB
       var rat = null;
       for (var j = 0; j < rationales.length; j++) {
         if (rationales[j].ticker === asset.ticker) { rat = rationales[j]; break; }
       }
-      // Find movement from JB
-      var buyMove = null; var sellMove = null;
-      for (var bi = 0; bi < movements.buys.length; bi++) {
-        if (movements.buys[bi].ticker === asset.ticker) { buyMove = movements.buys[bi]; break; }
-      }
-      for (var si = 0; si < movements.sells.length; si++) {
-        if (movements.sells[si].ticker === asset.ticker) { sellMove = movements.sells[si]; break; }
-      }
-      // Find in current position (Posição Atual)
       var posMatch = null;
       for (var pi = 0; pi < posAssets.length; pi++) {
         if (posAssets[pi].ticker === asset.ticker) { posMatch = posAssets[pi]; break; }
       }
+      var cartMatch = cartLookup[asset.ticker] || null;
 
       return {
         ticker: asset.ticker,
         name: asset.name || (posMatch ? posMatch.name : "") || (appMatch ? appMatch.name : ""),
-        class: asset.class || "",
-        subclass: asset.subclass || "",
-        suggestedValue: asset.value || 0,
-        suggestedPercent: asset.percentPortfolio || 0,
+        class: asset.class || "", subclass: asset.subclass || "",
+        suggestedValue: asset.value || 0, suggestedPercent: asset.percentPortfolio || 0,
         yieldEstimate: asset.yieldEstimate || 0,
-        // JB rationale (Pilar 2)
         currentPrice: rat ? rat.currentPrice : (posMatch ? posMatch.currentPrice : null),
-        ceilingPrice: rat ? rat.ceilingPrice : null,
-        deltaCeiling: rat ? rat.deltaCeiling : null,
+        ceilingPrice: rat ? rat.ceilingPrice : null, deltaCeiling: rat ? rat.deltaCeiling : null,
         rationale: rat ? rat.rationale : null,
-        // Movement from JB
-        buyValue: buyMove ? buyMove.value : 0,
-        sellValue: sellMove ? sellMove.value : 0,
-        // Current position
-        currentQty: posMatch ? posMatch.qty : 0,
-        currentAvgPrice: posMatch ? posMatch.avgPrice : 0,
-        currentTotalValue: posMatch ? posMatch.totalValue : 0,
-        hasPosition: !!posMatch,
-        // App data (Pilar 1)
+        currentQty: posMatch ? posMatch.qty : 0, currentAvgPrice: posMatch ? posMatch.avgPrice : 0,
+        currentTotalValue: posMatch ? posMatch.totalValue : 0, hasPosition: !!posMatch,
         appMatch: appMatch ? {
-          thesis: appMatch.thesis,
-          thesisPros: appMatch.thesisPros,
-          thesisCons: appMatch.thesisCons,
-          resultPros: appMatch.resultPros,
-          resultCons: appMatch.resultCons,
-          result: appMatch.result,
-          sunoView: appMatch.sunoView,
-          sentiment: appMatch.sentiment,
-          quarter: appMatch.quarter,
-          rankScore: appMatch.rankScore,
-          portfolio: appMatch._portfolio
+          thesis: appMatch.thesis, thesisPros: appMatch.thesisPros, thesisCons: appMatch.thesisCons,
+          resultPros: appMatch.resultPros, resultCons: appMatch.resultCons,
+          result: appMatch.result, sunoView: appMatch.sunoView, sentiment: appMatch.sentiment,
+          quarter: appMatch.quarter, rankScore: appMatch.rankScore, portfolio: appMatch._portfolio
         } : null,
         hasAppData: !!appMatch,
+        carteiraSuno: cartMatch, // NEW: Carteiras Suno data
         _analysis: null
       };
     });
-
     setCrossrefData(crossref);
     var sel = {};
     crossref.forEach(function(c) { sel[c.ticker] = true; });
     setSelectedAssets(sel);
-    setStep("crossref");
+    setRecStep("crossref");
   }
 
-  // ── Build full context for AI ──
+  // ── Context builders ──
   function buildProfileContext() {
     if (!editingProfile) return "";
     var pr = editingProfile;
@@ -1966,119 +1928,117 @@ function ConsultiveReportModal(p) {
     if (pr.monthlyContribution) parts.push("Capacidade de aporte mensal: R$ " + parseFloat(pr.monthlyContribution).toLocaleString("pt-BR"));
     parts.push("Experiencia: " + (pr.experience || "Intermediário"));
     parts.push("Perfil de risco: " + (pr.riskProfile || "Moderado"));
-    if (pr.horizon) parts.push("Horizonte de investimento: " + pr.horizon + " anos");
-    parts.push("Reserva de emergencia: " + (pr.hasEmergencyReserve ? "Sim" : "Nao"));
-    if (pr.liquidityNeed) parts.push("Necessidade de liquidez: " + pr.liquidityNeed);
-    if (pr.longTermGoals) parts.push("Objetivos de longo prazo: " + pr.longTermGoals);
-    if (pr.strategy) parts.push("Estrategia definida: " + pr.strategy);
-    if (pr.notes) parts.push("Observacoes: " + pr.notes);
+    if (pr.horizon) parts.push("Horizonte: " + pr.horizon + " anos");
+    parts.push("Reserva emergencia: " + (pr.hasEmergencyReserve ? "Sim" : "Nao"));
+    if (pr.liquidityNeed) parts.push("Liquidez: " + pr.liquidityNeed);
+    if (pr.longTermGoals) parts.push("Objetivos: " + pr.longTermGoals);
+    if (pr.strategy) parts.push("Estrategia: " + pr.strategy);
     var alloc = pr.allocation || {};
     var ap = []; ALLOC_CLASSES.forEach(function(cls) {
       var a = alloc[cls] || {target:0,current:0};
       ap.push(cls + ": meta=" + a.target + "%, atual=" + a.current + "%");
     });
-    if (ap.length > 0) parts.push("Alocacao alvo vs atual: " + ap.join("; "));
+    if (ap.length > 0) parts.push("Alocacao: " + ap.join("; "));
     return parts.join("\n");
   }
 
   function buildJourneyContext() {
+    var jbData = editingProfile ? editingProfile.jbData : null;
     if (!jbData) return "";
-    var parts = ["JOURNEY BOOK — ESTRATEGIA DEFINIDA:"];
+    var parts = ["JOURNEY BOOK — ESTRATEGIA:"];
     if (jbData.projections) {
       var pj = jbData.projections;
-      parts.push("Idade aposentadoria: " + (pj.retirementAge || "N/A"));
-      parts.push("Capital projetado ao aposentar: R$ " + (pj.capitalAtRetirement || 0).toLocaleString("pt-BR"));
-      parts.push("% da meta atingida: " + (pj.percentMeta || 0) + "%");
-      parts.push("Retorno real projetado: " + (pj.realReturnRate || "N/A"));
-      parts.push("Renda estimada hoje: R$ " + (pj.estimatedCurrentIncome || 0).toLocaleString("pt-BR"));
-      parts.push("Renda estimada ao aposentar: R$ " + (pj.estimatedRetirementIncome || 0).toLocaleString("pt-BR"));
-      parts.push("Aporte necessario para meta: R$ " + (pj.requiredContribution || 0).toLocaleString("pt-BR"));
+      if (pj.retirementAge) parts.push("Aposentadoria: " + pj.retirementAge + " anos");
+      if (pj.capitalAtRetirement) parts.push("Capital projetado: R$ " + pj.capitalAtRetirement.toLocaleString("pt-BR"));
+      if (pj.percentMeta) parts.push("Meta: " + pj.percentMeta + "%");
     }
     if (jbData.allocationMacro && jbData.allocationMacro.classes) {
-      parts.push("ALOCACAO MACRO SUGERIDA:");
+      parts.push("ALOCACAO SUGERIDA:");
       jbData.allocationMacro.classes.forEach(function(c) {
-        parts.push("  " + c.name + ": atual=" + c.currentPercent + "% → sugerido=" + c.suggestedPercent + "% (R$ " + (c.suggestedValue||0).toLocaleString("pt-BR") + ")");
+        parts.push("  " + c.name + ": " + c.currentPercent + "% → " + c.suggestedPercent + "%");
       });
-      if (jbData.allocationMacro.availableCash) parts.push("  Caixa disponivel JB: R$ " + jbData.allocationMacro.availableCash.toLocaleString("pt-BR"));
     }
-    // Current position summary
     if (posAssets.length > 0 || availableCash) {
-      parts.push("\nPOSICAO ATUAL DO CLIENTE (atualizada):");
-      if (availableCash) parts.push("Caixa disponivel ATUAL: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
+      parts.push("\nPOSICAO ATUAL:");
+      if (availableCash) parts.push("Caixa: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
       var totalPos = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
-      if (totalPos > 0) parts.push("Patrimonio em ativos (posicao atual): R$ " + totalPos.toLocaleString("pt-BR"));
-      if (posAssets.length > 0) {
-        parts.push("Ativos em carteira hoje:");
-        posAssets.forEach(function(a) {
-          parts.push("  " + a.ticker + ": Qtd=" + a.qty + ", PM=R$" + (a.avgPrice||0).toFixed(2) + ", Total=R$" + (a.totalValue||0).toLocaleString("pt-BR"));
-        });
-      }
+      if (totalPos > 0) parts.push("Patrimonio ativos: R$ " + totalPos.toLocaleString("pt-BR"));
+      posAssets.forEach(function(a) {
+        parts.push("  " + a.ticker + ": Qtd=" + a.qty + ", PM=R$" + (a.avgPrice||0).toFixed(2) + ", Total=R$" + (a.totalValue||0).toLocaleString("pt-BR"));
+      });
     }
     return parts.join("\n");
   }
 
-  // ── Generate Analysis ──
+  function buildCarteirasContext() {
+    var cartCtx = [];
+    (carteirasData.carteiras || []).forEach(function(cart) {
+      var ativos = carteirasData.ativos[cart.id] || [];
+      if (ativos.length === 0) return;
+      cartCtx.push("CARTEIRA " + cart.name.toUpperCase() + (cart.intl ? " (INTERNACIONAL)" : "") + ":");
+      ativos.forEach(function(a) {
+        var line = "  #" + (a.rank||"?") + " " + a.ticker + " — Teto: " + (a.precoTeto != null ? (cart.intl?"US$":"R$") + a.precoTeto : "N/A") + ", Vies: " + (a.vies||"N/A");
+        if (!cart.intl && a.aloc != null) line += ", Aloc: " + a.aloc + "%";
+        cartCtx.push(line);
+      });
+    });
+    return cartCtx.length > 0 ? "PILAR 5 — CARTEIRAS RECOMENDADAS SUNO:\n" + cartCtx.join("\n") : "";
+  }
+
+  // ── Generate ──
   async function generateAnalysis() {
     var selected = (crossrefData || []).filter(function(c) { return selectedAssets[c.ticker]; });
     if (selected.length === 0) return;
-    setGenerating(true); setError(""); setGenProgress("Preparando análise com os 4 pilares...");
-
+    setGenerating(true); setError(""); setGenProgress("Preparando análise com todos os pilares...");
     try {
       var profileCtx = buildProfileContext();
       var journeyCtx = buildJourneyContext();
+      var carteirasCtx = buildCarteirasContext();
 
-      // Build macro context (Pilar 4)
+      // Macro context (Pilar 4)
       var macroCtx = "";
       var md = loadMacroData();
       var hasReports = md.macroReports && md.macroReports.length > 0;
       if (hasReports || (md.biasViews && Object.keys(md.biasViews).length > 0)) {
-        var mp = ["PILAR 4 — VISAO MACRO E VIES TATICO DA SUNO:"];
+        var mp = ["PILAR 4 — MACRO & VIES:"];
         if (hasReports) {
-          var recentReports = md.macroReports.slice(0, 10);
-          mp.push("RELATORIOS MACRO (" + recentReports.length + " mais recentes):");
-          recentReports.forEach(function(rep, idx) {
-            var maxChars = idx === 0 ? 4000 : 2000; // mais espaço para o mais recente
-            mp.push("\n--- " + (rep.title||"Relatório") + " (" + (rep.date||"s/d") + ") ---");
-            mp.push(rep.text.slice(0, maxChars) + (rep.text.length > maxChars ? "..." : ""));
+          var rr = md.macroReports.slice(0, 10);
+          mp.push("RELATORIOS MACRO (" + rr.length + "):");
+          rr.forEach(function(rep, idx) {
+            var mx = idx === 0 ? 4000 : 2000;
+            mp.push("--- " + (rep.title||"Rel") + " (" + (rep.date||"s/d") + ") ---");
+            mp.push(rep.text.slice(0, mx) + (rep.text.length > mx ? "..." : ""));
           });
         }
         if (md.biasViews && Object.keys(md.biasViews).length > 0) {
-          mp.push("\nVIES TATICO POR CLASSE (escala -2=muito pessimista a +2=muito otimista):");
+          mp.push("VIES TATICO:");
           Object.keys(md.biasViews).forEach(function(cls) {
             var v = md.biasViews[cls];
-            var lbl = v <= -2 ? "muito pessimista" : v === -1 ? "pessimista" : v === 0 ? "neutro" : v === 1 ? "otimista" : "muito otimista";
-            mp.push("  " + cls + ": " + (v > 0 ? "+" : "") + v + " (" + lbl + ")");
+            mp.push("  " + cls + ": " + (v > 0 ? "+" : "") + v);
           });
-          mp.push("INSTRUCAO: Priorize aportes em classes com vies POSITIVO (+1 ou +2). Reduza prioridade de classes com vies NEGATIVO (-1 ou -2). Classes com vies 0 seguem a alocacao estrategica normal.");
         }
-        // Add profile-specific tactical allocation if available
         if (editingProfile && md.allocationTable && Object.keys(md.allocationTable).length > 0) {
-          var profileName = editingProfile.riskProfile || "Arrojado";
-          var hasData = Object.keys(md.allocationTable).some(function(k){return k.indexOf(profileName) === 0;});
-          if (hasData) {
-            mp.push("\nALOCACAO TATICA PARA PERFIL " + profileName.toUpperCase() + ":");
+          var pn = editingProfile.riskProfile || "Arrojado";
+          var hd = Object.keys(md.allocationTable).some(function(k){return k.indexOf(pn) === 0;});
+          if (hd) {
+            mp.push("ALOCACAO TATICA " + pn.toUpperCase() + ":");
             ALL_BIAS_ITEMS.forEach(function(item) {
-              var cell = md.allocationTable[profileName + "||" + item];
-              if (cell) mp.push("  " + item + ": estrategico=" + (cell.strategic||0) + "%, tatico=" + (cell.tactical||0) + "%");
+              var cell = md.allocationTable[pn + "||" + item];
+              if (cell) mp.push("  " + item + ": estr=" + (cell.strategic||0) + "%, tat=" + (cell.tactical||0) + "%");
             });
           }
         }
         macroCtx = mp.join("\n");
       }
 
-      // Build per-asset context
       var assetsCtx = selected.map(function(c) {
         var ctx = {
-          ticker: c.ticker, name: c.name, class: c.class, subclass: c.subclass,
+          ticker: c.ticker, name: c.name, class: c.class,
           suggestedValue: c.suggestedValue, suggestedPercent: c.suggestedPercent,
           currentPrice: c.currentPrice, ceilingPrice: c.ceilingPrice, deltaCeiling: c.deltaCeiling,
-          jbRationale: c.rationale,
-          yieldEstimate: c.yieldEstimate,
-          // Current position
-          currentQty: c.currentQty || 0,
-          currentAvgPrice: c.currentAvgPrice || 0,
-          currentTotalValue: c.currentTotalValue || 0,
-          hasPosition: c.hasPosition || false
+          jbRationale: c.rationale, yieldEstimate: c.yieldEstimate,
+          currentQty: c.currentQty || 0, currentAvgPrice: c.currentAvgPrice || 0,
+          currentTotalValue: c.currentTotalValue || 0, hasPosition: c.hasPosition || false
         };
         if (c.appMatch) {
           ctx.appData = {
@@ -2089,37 +2049,31 @@ function ConsultiveReportModal(p) {
             quarter: c.appMatch.quarter, rankScore: c.appMatch.rankScore
           };
         }
+        if (c.carteiraSuno) {
+          ctx.carteiraSuno = { rank: c.carteiraSuno.rank, precoTeto: c.carteiraSuno.precoTeto, vies: c.carteiraSuno.vies, aloc: c.carteiraSuno.aloc, carteira: c.carteiraSuno.carteira };
+        }
         return ctx;
       });
 
-      // Batch (max 6 per call for richer context)
       var batchSize = 6;
       var allAnalyses = [];
-
       for (var b = 0; b < assetsCtx.length; b += batchSize) {
         var batch = assetsCtx.slice(b, b + batchSize);
-        var batchNum = Math.floor(b / batchSize) + 1;
-        var totalBatches = Math.ceil(assetsCtx.length / batchSize);
-        setGenProgress("Analisando lote " + batchNum + "/" + totalBatches + " (" + batch.map(function(a){return a.ticker;}).join(", ") + ")...");
+        var bn = Math.floor(b / batchSize) + 1;
+        var tb = Math.ceil(assetsCtx.length / batchSize);
+        setGenProgress("Lote " + bn + "/" + tb + " (" + batch.map(function(a){return a.ticker;}).join(", ") + ")...");
 
-        var sys = 'Voce e um consultor de investimentos senior da Suno Consultoria, especialista em renda fixa, acoes brasileiras, fundos imobiliarios e investimentos internacionais.'
-          + ' Voce recebera 3 pilares de informacao para gerar recomendacoes PERSONALIZADAS e FUNDAMENTADAS:'
-          + ' PILAR 1 (Inteligencia Suno): teses de investimento, ultimos resultados trimestrais com nota, sentimento e visao da Suno para cada ativo — campo "appData" de cada ativo.'
-          + ' PILAR 2 (Journey Book): estrategia NORTEADORA definida entre cliente e consultor. Inclui alocacao-alvo por classe, ativos recomendados com precos-teto e racionais fundamentalistas. IMPORTANTE: As movimentacoes previstas no JB sao apenas indicativas e NAO devem ser usadas como recomendacao direta. Voce deve criar sua PROPRIA recomendacao com base no caixa disponivel REAL do cliente, na estrategia do JB, nos resultados mais recentes dos ativos e no perfil do cliente.'
-          + ' PILAR 4 (Macro & Viés Tático): Se fornecido, contem o relatorio macroeconomico da Suno e a escala de vies tatico por classe de ativos (-2 a +2). Use o vies para AJUSTAR TATICAMENTE as prioridades: classes com vies positivo (+1/+2) devem ter prioridade maior nos aportes; classes com vies negativo (-1/-2) devem ter prioridade reduzida MESMO que o cliente esteja sub-alocado nessa classe. Siga principios de VALUE INVESTING: priorize ativos com maior margem de seguranca (desconto vs preco-teto) e melhores fundamentos recentes.'
-          + ' PILAR 3 (Perfil do Investidor): dados pessoais, financeiros, perfil de risco, horizonte, objetivos de longo prazo e estrategia.'
-          + ' Com base nos 3 pilares, para CADA ativo gere:'
-          + ' 1) "overview": 2-3 frases contextualizando o ativo na carteira deste cliente especifico. Mencione se esta na carteira atual ou e entrada nova, valor sugerido, % da carteira, e como se encaixa no perfil/estrategia.'
-          + ' 2) "fundamentals": 2-3 frases sobre o momento atual do ativo. Se tem dados do Inteligência Suno (appData), use a nota, sentimento e ultimos resultados. Se nao, use o racional do Journey Book.'
-          + ' 3) "opportunities": 2-4 oportunidades CONCRETAS considerando preco-teto, momento do ativo, e perfil do cliente.'
-          + ' 4) "risks": 2-4 riscos ESPECIFICOS adaptados ao perfil e horizonte do cliente.'
-          + ' 5) "recommendation": Recomendacao objetiva e ACIONAVEL baseada no CAIXA DISPONIVEL REAL do cliente. Compare preco atual vs teto. Considere a alocacao-alvo do JB como norte. Sugira VALORES CONCRETOS de aporte com base no caixa disponivel informado, distribuindo de forma inteligente entre os ativos prioritarios. NAO repita as movimentacoes do Journey Book — crie sua propria recomendacao. Seja direto e use numeros.'
-          + ' 6) "verdict": "APORTAR", "MANTER", "REDUZIR", "AGUARDAR" ou "NOVO" (se e entrada nova na carteira)'
-          + ' 7) "priority": 1 a 5 (1=urgente/oportunidade clara, 5=baixa prioridade). Considere delta preco-teto, nota do resultado e aderencia a estrategia.'
-          + ' Use dados concretos. Seja profissional e direto. Personalize para ESTE cliente.'
-          + ' Responda SOMENTE com JSON puro: [{"ticker":"","overview":"","fundamentals":"","opportunities":[""],"risks":[""],"recommendation":"","verdict":"","priority":3}]';
+        var sys = 'Voce e um consultor senior da Suno Consultoria. Gere recomendacoes PERSONALIZADAS usando TODOS os pilares:'
+          + ' PILAR 1 (Inteligencia): teses, resultados, nota, sentimento — campo appData.'
+          + ' PILAR 2 (Journey Book): estrategia norteadora, alocacao-alvo. NAO repita movimentacoes do JB — crie SUA recomendacao.'
+          + ' PILAR 3 (Perfil): dados pessoais, risco, horizonte, objetivos.'
+          + ' PILAR 4 (Macro): relatorios macro e vies tatico. Priorize classes com vies POSITIVO.'
+          + ' PILAR 5 (Carteiras Suno): ranking oficial, preco-teto atualizado, vies Comprar/Aguardar. Campo carteiraSuno. Se vies="Aguardar", recomende cautela mesmo com desconto. Se vies="Comprar" e ranking alto, priorize.'
+          + ' Para CADA ativo gere: 1) overview (2-3 frases), 2) fundamentals (2-3 frases), 3) opportunities (2-4 itens), 4) risks (2-4 itens), 5) recommendation (acionavel, VALORES CONCRETOS com base no caixa), 6) verdict: APORTAR/MANTER/REDUZIR/AGUARDAR/NOVO, 7) priority: 1-5.'
+          + ' Criterios de prioridade: ranking Carteira Suno + margem seguranca (desconto vs teto) + vies macro + qualidade resultado + value investing.'
+          + ' JSON puro: [{"ticker":"","overview":"","fundamentals":"","opportunities":[""],"risks":[""],"recommendation":"","verdict":"","priority":3}]';
 
-        var userMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + "\n\nATIVOS PARA ANALISE:\n" + JSON.stringify(batch, null, 0);
+        var userMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + (carteirasCtx ? "\n\n" + carteirasCtx : "") + "\n\nATIVOS:\n" + JSON.stringify(batch, null, 0);
 
         var resp = await fetch("/api/anthropic", {
           method: "POST", headers: {"Content-Type":"application/json"},
@@ -2135,23 +2089,22 @@ function ConsultiveReportModal(p) {
         allAnalyses = allAnalyses.concat(JSON.parse(raw));
       }
 
-      // Apply analyses
       var aMap = {};
       allAnalyses.forEach(function(a) { aMap[a.ticker] = a; });
       setAnalyses(aMap);
 
-      // Strategy section with full tripod
-      setGenProgress("Gerando seção estratégica consolidada...");
+      // Strategy section
+      setGenProgress("Gerando seção estratégica...");
       var stratCtx = allAnalyses.map(function(a) {
         var cr = selected.find(function(c){return c.ticker===a.ticker;});
         return {ticker:a.ticker, verdict:a.verdict, priority:a.priority, suggestedValue:cr?cr.suggestedValue:0, class:cr?cr.class:"", recommendation:a.recommendation};
       });
 
-      var stratSys = 'Voce e um consultor senior da Suno Consultoria. Com base no TRIPE completo (perfil do cliente + Journey Book + analises individuais), escreva uma SECAO ESTRATEGICA CONSOLIDADA.'
-        + ' Inclua: 1) Visao geral da carteira e adequacao ao perfil do cliente (perfil de risco, horizonte, objetivos). 2) Aderencia a estrategia do Journey Book — a carteira esta convergindo para as metas de alocacao? Quais classes precisam de ajuste? 3) Destaques positivos e pontos de atencao baseados nos resultados mais recentes dos ativos. 4) PLANO DE APORTES CONCRETO: com base no caixa disponivel REAL do cliente, sugira como distribuir os aportes entre os ativos, priorizando por preco-teto, nota do resultado e aderencia a estrategia. Use valores em reais. 5) Projecao de impacto: como os aportes sugeridos aproximam o cliente da meta de longo prazo.'
-        + ' Escreva em 4-6 paragrafos. Profissional, direto, personalizado. Use numeros concretos. Sem markdown.';
+      var stratSys = 'Voce e um consultor senior da Suno Consultoria. Escreva uma SECAO ESTRATEGICA CONSOLIDADA mensal.'
+        + ' Inclua: 1) Visao geral da carteira vs perfil. 2) Aderencia ao JB. 3) Destaques e alertas. 4) PLANO DE APORTES CONCRETO com valores em reais. 5) Projecao de impacto.'
+        + ' 4-6 paragrafos. Profissional, direto, personalizado. Sem markdown.';
 
-      var stratMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + "\n\nANALISES:\n" + JSON.stringify(stratCtx, null, 0);
+      var stratMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + (carteirasCtx ? "\n\n" + carteirasCtx : "") + "\n\nANALISES:\n" + JSON.stringify(stratCtx, null, 0);
 
       var stratResp = await fetch("/api/anthropic", {
         method: "POST", headers: {"Content-Type":"application/json"},
@@ -2162,8 +2115,7 @@ function ConsultiveReportModal(p) {
       var st = "";
       for (var sti = 0; sti < sd.content.length; sti++) { if (sd.content[sti].text) st += sd.content[sti].text; }
       setStrategyText(st.trim());
-
-      setStep("review");
+      setRecStep("review");
     } catch(err) { console.error(err); setError("Erro: " + err.message); }
     setGenerating(false); setGenProgress("");
   }
@@ -2177,7 +2129,7 @@ function ConsultiveReportModal(p) {
     });
   }
 
-  // ── PDF Generation ──
+  // ── PDF ──
   async function generatePDF() {
     setPdfGenerating(true);
     try {
@@ -2189,73 +2141,56 @@ function ConsultiveReportModal(p) {
       function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
       function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
       var y=0;
-      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO CONSULTIVO",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
+      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO CONSULTIVO MENSAL",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
       function newPage(){doc.addPage();drawHeader();return 18;}
       function chk(needed){if(y+needed>H-16){y=newPage();return true;}return false;}
       var clientName = editingProfile ? editingProfile.name : "";
-
       // COVER
       setF(C.accent);doc.rect(0,0,W,1,"F");setF(C.accent);doc.rect(24,40,0.8,100,"F");
       doc.setFontSize(8);doc.setFont("helvetica","bold");setC(C.caption);doc.text("SUNO CONSULTORIA",32,46);
       doc.setFontSize(34);doc.setFont("helvetica","bold");setC(C.black);doc.text("Relatório",32,64);doc.text("Consultivo",32,80);
-      doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("Análise personalizada — Tripé Estratégico",32,98);
+      doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("Recomendação Mensal — Todos os Pilares",32,98);
       if(period.trim()){doc.setFontSize(9);doc.text("Período: "+period.trim(),32,108);}
       if(clientName){doc.setFontSize(7.5);setC(C.secondary);doc.text("ELABORADO PARA",32,170);doc.setFontSize(18);doc.setFont("helvetica","bold");setC(C.title);doc.text(clientName,32,179);}
       if(consultorName.trim()){doc.setFontSize(7.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("CONSULTOR",32,200);doc.setFontSize(10.5);setC(C.body);doc.text(consultorName.trim(),32,207);}
       setD(C.caption);doc.line(32,268,W-MR,268);doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(new Date().toLocaleDateString("pt-BR",{day:"2-digit",month:"long",year:"numeric"}),32,274);setF(C.accent);doc.rect(0,H-1,W,1,"F");
-
       // STRATEGY
       y=newPage();doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.accent);doc.text("VISÃO ESTRATÉGICA CONSOLIDADA",ML,y);y+=4;setF(C.accent);doc.rect(ML,y,25,0.4,"F");y+=6;
       doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);
       var sLines=wrap(strategyText,CW-4,8.5);
       for(var sli=0;sli<sLines.length;sli++){chk(4.5);doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);doc.text(sLines[sli],ML+2,y);y+=4.5;}
       y+=8;
-
-      // INDIVIDUAL ANALYSES sorted by priority
+      // INDIVIDUAL ANALYSES
       var reportAssets=(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];});
       reportAssets.sort(function(a,b){return(analyses[a.ticker].priority||3)-(analyses[b.ticker].priority||3);});
-
       for(var ai=0;ai<reportAssets.length;ai++){
         var c=reportAssets[ai];var an=analyses[c.ticker];if(!an)continue;
         chk(50);
-
-        // Header card
         setF(C.bg_card);setD(C.rule);doc.rect(ML,y-1,CW,22,"DF");
         doc.setFontSize(16);doc.setFont("helvetica","bold");setC(C.title);doc.text(c.ticker,ML+4,y+7);
         doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(c.name+"  ·  "+(c.class||""),ML+4,y+13);
         if(c.suggestedValue){doc.setFontSize(7);setC(C.caption);doc.text("Sugerido: R$ "+c.suggestedValue.toLocaleString("pt-BR",{minimumFractionDigits:0})+" ("+c.suggestedPercent.toFixed(1)+"%)",ML+4,y+18);}
-
-        // Verdict + Priority badges
         var verdictMap={"APORTAR":{bg:C.positive_bg,fg:C.positive},"MANTER":{bg:C.blue_bg,fg:C.blue},"REDUZIR":{bg:C.negative_bg,fg:C.negative},"AGUARDAR":{bg:C.amber_bg,fg:C.amber},"NOVO":{bg:C.positive_bg,fg:C.positive}};
         var vInfo=verdictMap[an.verdict]||verdictMap["AGUARDAR"];
         var vW=24;setF(vInfo.bg);doc.rect(W-MR-vW-4,y+2,vW,7,"F");
         doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(vInfo.fg);doc.text(an.verdict||"—",W-MR-vW-4+vW/2,y+6.5,{align:"center"});
-        // Priority
         if(an.priority){doc.setFontSize(6);setC(C.muted);doc.text("P"+an.priority,W-MR-vW-4+vW/2,y+12,{align:"center"});}
-
         y+=26;
-
         function drawSection(label,text,lCol){chk(12);doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(lCol);doc.text(label,ML+2,y);y+=5;doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.body);var ls=wrap(text,CW-6,8);for(var li=0;li<ls.length;li++){chk(4.5);doc.setFontSize(8);doc.setFont("helvetica","normal");setC(C.body);doc.text(ls[li],ML+2,y);y+=4;}y+=3;}
         function drawBullets(label,items,bChar,bCol){if(!items||!items.length)return;chk(10);doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(bCol);doc.text(label,ML+2,y);y+=5;for(var ii=0;ii<items.length;ii++){chk(5);doc.setFontSize(7.5);doc.setFont("helvetica","bold");setC(bCol);doc.text(bChar,ML+3,y);doc.setFont("helvetica","normal");setC(C.body);var il=wrap(items[ii],CW-12,7.5);for(var jj=0;jj<il.length;jj++){doc.setFontSize(7.5);doc.setFont("helvetica","normal");setC(C.body);doc.text(il[jj],ML+8,y);y+=3.6;}y+=0.6;}y+=3;}
-
         if(an.overview)drawSection("VISÃO GERAL",an.overview,C.title);
-        if(an.fundamentals)drawSection("FUNDAMENTOS E MOMENTO",an.fundamentals,C.amber);
+        if(an.fundamentals)drawSection("FUNDAMENTOS",an.fundamentals,C.amber);
         drawBullets("OPORTUNIDADES",an.opportunities,"+",C.positive);
         drawBullets("RISCOS",an.risks,"-",C.negative);
         if(an.recommendation)drawSection("RECOMENDAÇÃO",an.recommendation,C.accent);
-
         y+=3;setD(C.rule);doc.line(ML,y,ML+25,y);y+=10;
       }
-
       // Disclaimer
       chk(20);y+=5;doc.setFontSize(6);doc.setFont("helvetica","italic");setC(C.muted);
-      var discLines=wrap("Este relatório tem caráter informativo e não constitui recomendação de investimento. As análises são baseadas em dados públicos e relatórios da Suno Research. Investimentos envolvem riscos. Consulte seu assessor antes de tomar decisões.",CW,6);
+      var discLines=wrap("Este relatório tem caráter informativo e não constitui recomendação de investimento. Investimentos envolvem riscos. Consulte seu assessor.",CW,6);
       for(var dli=0;dli<discLines.length;dli++){doc.text(discLines[dli],ML,y);y+=3;}
-
-      // Page numbers
       var pc=doc.internal.getNumberOfPages();for(var pg=2;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(6.5);doc.setFont("helvetica","normal");setC(C.muted);doc.text((pg-1)+"  |  "+(pc-1),W/2,H-10,{align:"center"});setF(C.accent);doc.rect(0,H-0.5,W,0.5,"F");}
-
-      var fn="relatorio-consultivo"+(clientName?"-"+clientName.replace(/\s+/g,"-").toLowerCase():"")+".pdf";
+      var fn="consultivo-mensal"+(clientName?"-"+clientName.replace(/\s+/g,"-").toLowerCase():"")+"-"+(period||"").replace(/\s/g,"")+".pdf";
       doc.save(fn);
     }catch(err){console.error(err);alert("Erro PDF: "+err.message);}
     setPdfGenerating(false);
@@ -2268,242 +2203,222 @@ function ConsultiveReportModal(p) {
 
   var selCount=Object.keys(selectedAssets).length;
   var matchCount=crossrefData?crossrefData.filter(function(c){return c.hasAppData;}).length:0;
+  var cartCount=crossrefData?crossrefData.filter(function(c){return c.carteiraSuno;}).length:0;
+  var jbData = editingProfile ? editingProfile.jbData : null;
+  var hasJB = !!jbData;
 
   // ── RENDER ──
   return (
     <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
-      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(220,38,38,0.15)",width:"100%",maxWidth:"800px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
+      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(220,38,38,0.15)",width:"100%",maxWidth:"850px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         {/* Header */}
-        <div style={{padding:"20px 24px 16px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
+        <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
-            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Relatório Consultivo — Tripé</div>
-            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Perfil + Journey Book + Inteligência Suno</div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Consultivo</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Estratégia (JB salvo) + Recomendação Mensal</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer",padding:"4px 8px"}}>{"✕"}</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
         </div>
 
-        {/* Steps */}
-        <div style={{padding:"10px 24px",display:"flex",gap:"3px",borderBottom:"1px solid rgba(255,255,255,0.04)",overflowX:"auto"}}>
-          {CONSULT_STEPS.map(function(s){
-            var isActive=s===step;var idx=CONSULT_STEPS.indexOf(s);var curIdx=CONSULT_STEPS.indexOf(step);var isDone=idx<curIdx;
-            return <div key={s} style={{flex:1,textAlign:"center",padding:"5px 3px",borderRadius:"6px",fontSize:"8px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.3px",background:isActive?"rgba(220,38,38,0.12)":isDone?"rgba(74,222,128,0.06)":"rgba(255,255,255,0.02)",color:isActive?"#DC2626":isDone?"#4ade80":"rgba(255,255,255,0.2)",border:isActive?"1px solid rgba(220,38,38,0.2)":"1px solid transparent",whiteSpace:"nowrap"}}>{isDone?"✓ ":""}{STEP_LABELS[s]}</div>;
-          })}
+        {/* Client selector */}
+        <div style={{padding:"12px 24px",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+          <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+            <select value={selectedProfileId} onChange={function(e){selectProfile(e.target.value);}} style={Object.assign({},iS,{flex:1})}>
+              <option value="" style={{background:"#1a1a1a"}}>Selecionar cliente...</option>
+              {clientProfiles.map(function(pr){return <option key={pr.id} value={pr.id} style={{background:"#1a1a1a"}}>{pr.name||"Sem nome"}{pr.riskProfile?" ("+pr.riskProfile+")":""}{pr.jbData?" ✓ JB":""}</option>;})}
+            </select>
+            <button onClick={createNewProfileInline} style={{fontSize:"10px",color:"#DC2626",background:"transparent",border:"1px solid rgba(220,38,38,0.2)",borderRadius:"7px",padding:"8px 12px",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>+ Novo</button>
+          </div>
         </div>
 
-        <div style={{padding:"20px 24px 24px"}}>
-          {error&&<div style={{color:"#f87171",fontSize:"11px",padding:"8px 10px",background:"rgba(220,38,38,0.08)",borderRadius:"6px",marginBottom:"10px"}}>{error}</div>}
+        {/* Sub-abas */}
+        {editingProfile && (<div>
+          <div style={{display:"flex",gap:"2px",padding:"10px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            {[{k:CONSULT_TAB_STRATEGY,l:"Estratégia (JB)",icon:"📋"},{k:CONSULT_TAB_RECOMMEND,l:"Recomendação Mensal",icon:"📊"}].map(function(t){
+              return <button key={t.k} onClick={function(){setMainTab(t.k);}} style={{padding:"9px 18px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:mainTab===t.k?"rgba(220,38,38,0.12)":"transparent",color:mainTab===t.k?"#DC2626":"rgba(255,255,255,0.3)"}}>{t.icon} {t.l}</button>;
+            })}
+          </div>
 
-          {/* STEP 1: Profile */}
-          {step==="profile"&&(<div>
-            <div style={{marginBottom:"14px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
-                <label style={Object.assign({},lS,{marginBottom:0})}>Perfil do Cliente (Pilar 3)</label>
-                <button onClick={createNewProfileInline} style={{fontSize:"10px",color:"#DC2626",background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>+ Novo</button>
+          <div style={{padding:"20px 24px 24px"}}>
+            {error&&<div style={{color:"#f87171",fontSize:"11px",padding:"8px 10px",background:"rgba(220,38,38,0.08)",borderRadius:"6px",marginBottom:"10px"}}>{error}</div>}
+
+            {/* ═══ TAB ESTRATÉGIA ═══ */}
+            {mainTab===CONSULT_TAB_STRATEGY&&(<div>
+              {/* Profile editor */}
+              <div style={{background:"rgba(220,38,38,0.02)",border:"1px solid rgba(220,38,38,0.1)",borderRadius:"10px",padding:"12px",marginBottom:"14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+                  <span style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>Perfil: {editingProfile.name || "Sem nome"}</span>
+                  <button onClick={function(){setShowProfileEditor(!showProfileEditor);}} style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"3px 8px",cursor:"pointer"}}>{showProfileEditor?"Recolher":"Editar Perfil"}</button>
+                </div>
+                {!showProfileEditor&&editingProfile.name&&<div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",lineHeight:1.6}}>{editingProfile.age&&editingProfile.age+" anos"}{editingProfile.profession&&" · "+editingProfile.profession}{editingProfile.riskProfile&&" · "+editingProfile.riskProfile}{editingProfile.horizon&&" · "+editingProfile.horizon+" anos"}</div>}
+                {showProfileEditor&&<div><ClientProfileEditor profile={editingProfile} onChange={function(u){setEditingProfile(u);}}/><button onClick={function(){saveProfileToList(editingProfile);setShowProfileEditor(false);}} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",marginTop:"10px",width:"100%"})}>Salvar perfil</button></div>}
               </div>
-              <select value={selectedProfileId} onChange={function(e){selectProfile(e.target.value);}} style={Object.assign({},iS,{marginBottom:"6px"})}>
-                <option value="" style={{background:"#1a1a1a"}}>Selecionar cliente...</option>
-                {clientProfiles.map(function(pr){return <option key={pr.id} value={pr.id} style={{background:"#1a1a1a"}}>{pr.name||"Sem nome"}{pr.riskProfile?" ("+pr.riskProfile+")":""}</option>;})}
-              </select>
-              {editingProfile&&(
-                <div style={{background:"rgba(220,38,38,0.02)",border:"1px solid rgba(220,38,38,0.1)",borderRadius:"10px",padding:"12px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-                    <span style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>{showProfileEditor?"Editando":"Perfil: "+editingProfile.name}</span>
-                    <button onClick={function(){setShowProfileEditor(!showProfileEditor);}} style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",background:"transparent",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"6px",padding:"3px 8px",cursor:"pointer",fontWeight:600}}>{showProfileEditor?"Recolher":"Editar"}</button>
+
+              {/* JB status */}
+              <div style={{fontSize:"10px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>Journey Book</div>
+              {hasJB ? (
+                <div style={{background:"rgba(74,222,128,0.04)",border:"1px solid rgba(74,222,128,0.15)",borderRadius:"10px",padding:"14px",marginBottom:"14px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                      <span style={{fontSize:"9px",padding:"2px 8px",borderRadius:"10px",background:"rgba(74,222,128,0.12)",color:"#4ade80",fontWeight:700}}>JB SALVO</span>
+                      <span style={{fontSize:"10px",color:"rgba(255,255,255,0.4)"}}>Importado em {editingProfile.jbImportDate}</span>
+                    </div>
+                    <div style={{display:"flex",gap:"4px"}}>
+                      <label style={{fontSize:"9px",color:"#fbbf24",background:"rgba(251,191,36,0.08)",border:"1px solid rgba(251,191,36,0.2)",borderRadius:"5px",padding:"4px 8px",cursor:"pointer",fontWeight:600}}>
+                        Reimportar
+                        <input ref={fileRef} type="file" accept=".pdf" onChange={handleJBUpload} style={{display:"none"}}/>
+                      </label>
+                      <button onClick={clearJB} style={{fontSize:"9px",color:"rgba(220,38,38,0.5)",background:"transparent",border:"1px solid rgba(220,38,38,0.15)",borderRadius:"5px",padding:"4px 8px",cursor:"pointer"}}>Remover</button>
+                    </div>
                   </div>
-                  {!showProfileEditor&&editingProfile.name&&(<div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",lineHeight:1.6}}>
-                    {editingProfile.age&&editingProfile.age+" anos"}{editingProfile.profession&&" · "+editingProfile.profession}{editingProfile.riskProfile&&" · "+editingProfile.riskProfile}{editingProfile.horizon&&" · "+editingProfile.horizon+" anos"}{editingProfile.totalWealth&&" · R$ "+parseFloat(editingProfile.totalWealth).toLocaleString("pt-BR")}
-                  </div>)}
-                  {showProfileEditor&&(<div><ClientProfileEditor profile={editingProfile} onChange={function(u){setEditingProfile(u);}} compact={true}/><button onClick={function(){saveProfileInline();setShowProfileEditor(false);}} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",marginTop:"10px",width:"100%"})}>Salvar perfil</button></div>)}
+                  <div style={{fontSize:"10px",color:"rgba(255,255,255,0.45)",lineHeight:1.6}}>
+                    {jbData.suggestedPortfolio&&<span>{jbData.suggestedPortfolio.length} ativos sugeridos</span>}
+                    {jbData.projections&&jbData.projections.capitalAtRetirement&&<span> · Capital projetado: R$ {jbData.projections.capitalAtRetirement.toLocaleString("pt-BR")}</span>}
+                    {jbData.allocationMacro&&jbData.allocationMacro.classes&&<span> · {jbData.allocationMacro.classes.length} classes de alocação</span>}
+                  </div>
+                  {jbFileName && <div style={{marginTop:"8px",padding:"8px",background:"rgba(251,191,36,0.04)",borderRadius:"6px",border:"1px solid rgba(251,191,36,0.1)"}}>
+                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",marginBottom:"6px"}}>Novo arquivo: {jbFileName}</div>
+                    <button onClick={parseJourneyBook} disabled={jbParsing} style={Object.assign({},btnBase,{background:jbParsing?"rgba(255,255,255,0.05)":"#fbbf24",color:jbParsing?"rgba(255,255,255,0.3)":"#000",fontSize:"10px",width:"100%"})}>{jbParsing?"Processando...":"Reimportar Journey Book"}</button>
+                  </div>}
+                </div>
+              ) : (
+                <div style={{background:"rgba(255,255,255,0.02)",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:"10px",padding:"20px",textAlign:"center",marginBottom:"14px"}}>
+                  <div style={{fontSize:"11px",color:"rgba(255,255,255,0.3)",marginBottom:"8px"}}>Nenhum Journey Book importado para este cliente</div>
+                  <label style={{display:"inline-block",padding:"8px 16px",borderRadius:"7px",border:"none",background:"#DC2626",color:"#fff",fontWeight:700,fontSize:"11px",cursor:"pointer"}}>
+                    Importar PDF do Journey Book
+                    <input ref={fileRef} type="file" accept=".pdf" onChange={handleJBUpload} style={{display:"none"}}/>
+                  </label>
+                  {jbFileName && <div style={{marginTop:"8px"}}>
+                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",marginBottom:"4px"}}>{jbFileName}</div>
+                    <button onClick={parseJourneyBook} disabled={jbParsing} style={Object.assign({},btnBase,{background:jbParsing?"rgba(255,255,255,0.05)":"#DC2626",color:jbParsing?"rgba(255,255,255,0.3)":"#fff",fontSize:"11px"})}>{jbParsing?"Processando com IA...":"Processar Journey Book"}</button>
+                  </div>}
                 </div>
               )}
-            </div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
-              <div><label style={lS}>Consultor</label><input value={consultorName} onChange={function(e){setConsultorName(e.target.value);}} style={iS}/></div>
-              <div><label style={lS}>Período</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} placeholder="Ex: 1T26" style={iS}/></div>
-            </div>
-            <button onClick={function(){if(editingProfile)setStep("journey");}} disabled={!editingProfile} style={Object.assign({},btnBase,{width:"100%",background:editingProfile?"#DC2626":"rgba(255,255,255,0.05)",color:editingProfile?"#fff":"rgba(255,255,255,0.3)"})}>
-              {editingProfile?"Prosseguir → Journey Book":"Selecione um cliente primeiro"}
-            </button>
-          </div>)}
 
-          {/* STEP 2: Journey Book */}
-          {step==="journey"&&(<div>
-            <div style={{marginBottom:"14px"}}>
-              <label style={lS}>Upload do Journey Book (Pilar 2)</label>
-              <div style={{border:"2px dashed rgba(220,38,38,0.2)",borderRadius:"10px",padding:"24px",textAlign:"center",cursor:"pointer",background:"rgba(220,38,38,0.02)"}} onClick={function(){fileRef.current&&fileRef.current.click();}}>
-                <input ref={fileRef} type="file" accept=".pdf" onChange={handleJBUpload} style={{display:"none"}}/>
-                {jbFileName?(<div><div style={{fontSize:"13px",fontWeight:700,color:"#DC2626"}}>{jbFileName}</div>{jbData&&<div style={{fontSize:"11px",color:"#4ade80",marginTop:"4px"}}>✓ Processado — {(jbData.suggestedPortfolio||[]).length} ativos extraídos</div>}</div>):(<div><div style={{fontSize:"24px",marginBottom:"6px"}}>&#128218;</div><div style={{fontSize:"12px",color:"rgba(255,255,255,0.4)"}}>Clique para selecionar o PDF do Journey Book</div></div>)}
-              </div>
-            </div>
-            {jbFileName&&!jbData&&(<button onClick={parseJourneyBook} disabled={jbParsing} style={Object.assign({},btnBase,{width:"100%",background:jbParsing?"rgba(220,38,38,0.3)":"#DC2626",color:"#fff",marginBottom:"10px"})}>{jbParsing?"Extraindo dados com IA...":"Processar Journey Book com IA"}</button>)}
-
-            {jbData&&(<div>
-              {/* Summary of extracted data */}
-              <div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"12px"}}>
-                <div style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>✓ Journey Book processado</div>
-                {jbData.allocationMacro&&jbData.allocationMacro.classes&&(<div style={{marginBottom:"8px"}}><div style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.3)",marginBottom:"4px"}}>ALOCAÇÃO MACRO</div>{jbData.allocationMacro.classes.map(function(c){var diff=c.suggestedPercent-c.currentPercent;return <div key={c.name} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",fontSize:"10px"}}><span style={{color:"rgba(255,255,255,0.5)"}}>{c.name}</span><span><span style={{color:"rgba(255,255,255,0.3)"}}>{c.currentPercent}%</span><span style={{color:"rgba(255,255,255,0.15)",margin:"0 4px"}}>→</span><span style={{color:"#fbbf24",fontWeight:700}}>{c.suggestedPercent}%</span>{diff!==0&&<span style={{fontSize:"9px",color:diff>0?"#4ade80":"#f87171",marginLeft:"4px"}}>({diff>0?"+":""}{diff})</span>}</span></div>;})}</div>)}
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",fontSize:"10px"}}>
-                  <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.suggestedPortfolio||[]).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Ativos sugeridos</div></div>
-                  <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com racional</div></div>
-                  <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"6px",padding:"8px",textAlign:"center"}}><div style={{fontWeight:700,color:"#f1f5f9",fontSize:"14px"}}>{(jbData.assetRationales||[]).filter(function(r){return r.ceilingPrice;}).length}</div><div style={{color:"rgba(255,255,255,0.3)"}}>Com preço-teto</div></div>
-                </div>
-              </div>
-              <div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(251,191,36,0.15)",marginBottom:"12px"}}>
-                <label style={{fontSize:"10px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px",display:"block"}}>Caixa disponível para aplicação (R$)</label>
-                <input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} placeholder={jbData.allocationMacro&&jbData.allocationMacro.availableCash?"JB indica R$ "+jbData.allocationMacro.availableCash.toLocaleString("pt-BR")+" — informe o valor REAL":"Ex: 80000"} type="number" style={Object.assign({},iS,{border:"1px solid rgba(251,191,36,0.2)",fontSize:"14px",fontWeight:700,color:"#fbbf24"})}/>
-                <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",marginTop:"4px"}}>Informe o valor real disponível hoje para a IA recomendar aportes concretos. Não use o valor do JB se já houve movimentações.</div>
-              </div>
-              <button onClick={function(){setStep("position");}} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Prosseguir → Posição Atual</button>
+              <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",lineHeight:1.6}}>O Journey Book fica salvo permanentemente no perfil do cliente. Na aba "Recomendação Mensal" você só precisa importar a posição atual e gerar.</div>
             </div>)}
 
-            <button onClick={function(){setStep("profile");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)",marginTop:"8px"})}>&#8592; Voltar</button>
-          </div>)}
+            {/* ═══ TAB RECOMENDAÇÃO ═══ */}
+            {mainTab===CONSULT_TAB_RECOMMEND&&(<div>
+              {!hasJB && <div style={{textAlign:"center",padding:"30px 0",color:"rgba(255,255,255,0.3)",fontSize:"12px"}}>Importe o Journey Book na aba "Estratégia" primeiro.</div>}
+              {hasJB && (<div>
+                {/* Rec step indicator */}
+                <div style={{display:"flex",gap:"3px",marginBottom:"14px"}}>
+                  {REC_STEPS.map(function(s){
+                    var isActive=s===recStep;var idx=REC_STEPS.indexOf(s);var curIdx=REC_STEPS.indexOf(recStep);var isDone=idx<curIdx;
+                    return <div key={s} style={{flex:1,textAlign:"center",padding:"5px 3px",borderRadius:"6px",fontSize:"8px",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.3px",background:isActive?"rgba(220,38,38,0.12)":isDone?"rgba(74,222,128,0.06)":"rgba(255,255,255,0.02)",color:isActive?"#DC2626":isDone?"#4ade80":"rgba(255,255,255,0.2)",border:isActive?"1px solid rgba(220,38,38,0.2)":"1px solid transparent"}}>{isDone?"✓ ":""}{REC_STEP_LABELS[s]}</div>;
+                  })}
+                </div>
 
-          {/* STEP 3: Position */}
-          {step==="position"&&(<div>
-            <div style={{marginBottom:"14px"}}>
-              <label style={lS}>Importar posição atual do cliente (Excel)</label>
-              <div style={{border:"2px dashed rgba(96,165,250,0.2)",borderRadius:"10px",padding:"20px",textAlign:"center",cursor:"pointer",background:"rgba(96,165,250,0.02)"}} onClick={function(){posFileRef.current&&posFileRef.current.click();}}>
-                <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
-                {posFileName?(<div><div style={{fontSize:"13px",fontWeight:700,color:"#60a5fa"}}>{posFileName}</div><div style={{fontSize:"11px",color:"#4ade80",marginTop:"4px"}}>{posAssets.length} ativos detectados</div></div>):(<div><div style={{fontSize:"20px",marginBottom:"4px"}}>📊</div><div style={{fontSize:"12px",color:"rgba(255,255,255,0.4)"}}>Excel com posição detalhada atual (.xlsx, .csv)</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.2)",marginTop:"2px"}}>Relatório de Posição Detalhada do BTG, XP, Rico, etc.</div></div>)}
-              </div>
-            </div>
+                {/* Período + Consultor */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"12px"}}>
+                  <div><label style={lS}>Consultor</label><input value={consultorName} onChange={function(e){setConsultorName(e.target.value);}} style={iS}/></div>
+                  <div><label style={lS}>Período</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} placeholder="Abr/2026" style={iS}/></div>
+                </div>
 
-            {posAssets.length > 0 && (
-              <div style={{maxHeight:"160px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"4px",marginBottom:"10px"}}>
-                <table style={{width:"100%",borderCollapse:"collapse",fontSize:"10px"}}>
-                  <thead><tr style={{borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
-                    <th style={{textAlign:"left",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Ticker</th>
-                    <th style={{textAlign:"left",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Nome</th>
-                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Qtd</th>
-                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>PM</th>
-                    <th style={{textAlign:"right",padding:"4px 6px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>Total</th>
-                  </tr></thead>
-                  <tbody>{posAssets.slice(0,30).map(function(a,i){
-                    return <tr key={i} style={{borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
-                      <td style={{padding:"3px 6px",color:"#f1f5f9",fontWeight:700}}>{a.ticker}</td>
-                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)"}}>{a.name}</td>
-                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.qty||""}</td>
-                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.avgPrice?a.avgPrice.toFixed(2):""}</td>
-                      <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.4)",textAlign:"right"}}>{a.totalValue?a.totalValue.toLocaleString("pt-BR",{minimumFractionDigits:2}):""}</td>
-                    </tr>;
-                  })}</tbody>
-                </table>
-                {posAssets.length>30&&<div style={{textAlign:"center",padding:"4px",fontSize:"9px",color:"rgba(255,255,255,0.2)"}}>+ {posAssets.length-30} ativos...</div>}
-              </div>
-            )}
-
-            <div style={{marginBottom:"14px"}}>
-              <label style={lS}>Caixa disponível para movimentação (R$)</label>
-              <input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} placeholder="Ex: 150000" type="number" style={iS}/>
-              <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",marginTop:"4px"}}>Valor em caixa que pode ser alocado agora. Se não souber, deixe em branco.</div>
-            </div>
-
-            <div style={{display:"flex",gap:"8px"}}>
-              <button onClick={function(){setStep("journey");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592; Voltar</button>
-              <button onClick={buildCrossref} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir → Cruzamento Tripé</button>
-            </div>
-          </div>)}
-
-          {/* STEP 4: Crossref */}
-          {step==="crossref"&&crossrefData&&(<div>
-            <div style={{marginBottom:"8px",fontSize:"12px",fontWeight:600,color:"rgba(255,255,255,0.6)"}}>{matchCount} de {crossrefData.length} ativos com dados no Inteligência Suno (Pilar 1)</div>
-            <div style={{maxHeight:"350px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"4px",marginBottom:"14px"}}>
-              {crossrefData.map(function(c){
-                var checked=!!selectedAssets[c.ticker];var an=c.appMatch;
-                var scC=an&&an.rankScore?(an.rankScore>=8?"#4ade80":an.rankScore>=5?"#fbbf24":"#f87171"):"rgba(255,255,255,0.2)";
-                return <div key={c.ticker} style={{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
-                  <div onClick={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{width:"16px",height:"16px",borderRadius:"4px",border:checked?"2px solid #DC2626":"2px solid rgba(255,255,255,0.15)",background:checked?"#DC2626":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:"#fff",cursor:"pointer",flexShrink:0}}>{checked?"✓":""}</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
-                      <span style={{fontSize:"11px",fontWeight:700,color:"#f1f5f9"}}>{c.ticker}</span>
-                      <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:c.hasAppData?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.hasAppData?"#4ade80":"rgba(255,255,255,0.25)",fontWeight:600}}>{c.hasAppData?"PILAR 1+2":"SÓ JB"}</span>
-                      <span style={{fontSize:"9px",color:"rgba(255,255,255,0.2)"}}>{c.class}</span>
-                    </div>
-                    <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",marginTop:"1px"}}>
-                      R$ {(c.suggestedValue||0).toLocaleString("pt-BR")} ({(c.suggestedPercent||0).toFixed(1)}%)
-                      {c.ceilingPrice&&<span style={{marginLeft:"6px",color:c.deltaCeiling>0?"#4ade80":"#f87171"}}> Teto: {c.ceilingPrice} ({c.deltaCeiling>0?"+":""}{c.deltaCeiling}%)</span>}
-                      {c.buyValue>0&&<span style={{marginLeft:"6px",color:"#4ade80"}}>Aportar R$ {c.buyValue.toLocaleString("pt-BR")}</span>}
-                    </div>
+                {/* STEP 1: Position */}
+                {recStep==="position"&&(<div>
+                  <div style={{fontSize:"10px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>Posição Atual do Cliente</div>
+                  <div style={{marginBottom:"10px"}}>
+                    <label style={lS}>Upload Excel da posição</label>
+                    <label style={{display:"block",padding:"14px",border:"1px dashed rgba(255,255,255,0.1)",borderRadius:"8px",textAlign:"center",cursor:"pointer",color:"rgba(255,255,255,0.3)",fontSize:"11px"}}>
+                      {posFileName||"Clique para selecionar .xlsx"}
+                      <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
+                    </label>
                   </div>
-                  {an&&an.rankScore&&<span style={{fontSize:"10px",fontWeight:700,color:scC}}>{an.rankScore.toFixed(1)}</span>}
-                </div>;
-              })}
-            </div>
-            <div style={{display:"flex",gap:"8px"}}>
-              <button onClick={function(){setStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
-              <button onClick={function(){setStep("generate");}} disabled={selCount===0} style={Object.assign({},btnBase,{flex:1,background:selCount>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCount>0?"#fff":"rgba(255,255,255,0.3)"})}>Gerar Análise IA ({selCount} ativos) →</button>
-            </div>
-          </div>)}
+                  {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos encontrados na posição</div>}
+                  <div style={{marginBottom:"10px"}}><label style={lS}>Caixa disponível para aportes (R$)</label><input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} type="number" placeholder="50000" style={iS}/></div>
+                  <button onClick={function(){buildCrossref();}} disabled={!hasJB} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Cruzar Dados →</button>
+                </div>)}
 
-          {/* STEP 4: Generate */}
-          {step==="generate"&&(<div style={{textAlign:"center",padding:"30px 0"}}>
-            {!generating&&!error&&(<div>
-              <div style={{fontSize:"14px",fontWeight:600,color:"rgba(255,255,255,0.6)",marginBottom:"8px"}}>Tripé pronto: {selCount} ativos para {editingProfile?editingProfile.name:"Cliente"}</div>
-              <div style={{fontSize:"11px",color:"rgba(255,255,255,0.3)",marginBottom:"20px",lineHeight:1.6}}>A IA vai cruzar o Perfil ({editingProfile?editingProfile.riskProfile:""}, {editingProfile?editingProfile.horizon:""} anos) + Journey Book ({(jbData&&jbData.suggestedPortfolio?jbData.suggestedPortfolio.length:0)} ativos sugeridos) + Inteligência Suno ({matchCount} com resultados) para gerar recomendações personalizadas.</div>
-              <button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"12px 30px",fontSize:"14px"})}>Iniciar Análise Tripé</button>
+                {/* STEP 2: Crossref */}
+                {recStep==="crossref"&&crossrefData&&(<div>
+                  <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>Cruzamento — {crossrefData.length} ativos | {matchCount} com Inteligência | {cartCount} com Carteira Suno</div>
+                  <div style={{maxHeight:"350px",overflow:"auto",marginBottom:"12px"}}>
+                    {crossrefData.map(function(c){
+                      var checked=!!selectedAssets[c.ticker];
+                      return <div key={c.ticker} style={{display:"flex",alignItems:"center",gap:"8px",padding:"6px 8px",borderBottom:"1px solid rgba(255,255,255,0.03)",opacity:checked?1:0.4}}>
+                        <input type="checkbox" checked={checked} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626"}}/>
+                        <div style={{flex:1}}>
+                          <span style={{fontWeight:700,fontSize:"12px",color:"#f1f5f9"}}>{c.ticker}</span>
+                          <span style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginLeft:"6px"}}>{c.name} · {c.class}</span>
+                        </div>
+                        <div style={{display:"flex",gap:"4px"}}>
+                          {c.hasAppData&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(74,222,128,0.08)",color:"#4ade80",fontWeight:600}}>Intel</span>}
+                          {c.carteiraSuno&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(59,130,246,0.08)",color:"#60a5fa",fontWeight:600}}>Cart #{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
+                          {c.hasPosition&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(251,191,36,0.08)",color:"#fbbf24",fontWeight:600}}>Pos</span>}
+                        </div>
+                      </div>;
+                    })}
+                  </div>
+                  <div style={{display:"flex",gap:"8px"}}>
+                    <button onClick={function(){setRecStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
+                    <button onClick={function(){setRecStep("generate");}} disabled={selCount===0} style={Object.assign({},btnBase,{flex:1,background:selCount>0?"#DC2626":"rgba(255,255,255,0.05)",color:selCount>0?"#fff":"rgba(255,255,255,0.3)"})}>Gerar Análise ({selCount} ativos) →</button>
+                  </div>
+                </div>)}
+
+                {/* STEP 3: Generate */}
+                {recStep==="generate"&&(<div style={{textAlign:"center",padding:"30px 0"}}>
+                  {!generating&&!error&&(<div>
+                    <div style={{fontSize:"14px",fontWeight:600,color:"rgba(255,255,255,0.6)",marginBottom:"8px"}}>{selCount} ativos para {editingProfile?editingProfile.name:""}</div>
+                    <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginBottom:"16px"}}>5 pilares: Perfil + JB + Inteligência ({matchCount}) + Macro + Carteiras ({cartCount})</div>
+                    <button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"12px 30px",fontSize:"14px"})}>Iniciar Análise</button>
+                  </div>)}
+                  {generating&&<div><div style={{fontSize:"12px",fontWeight:600,color:"#DC2626",marginBottom:"6px"}}>Gerando...</div><div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>{genProgress}</div></div>}
+                  {error&&!generating&&<div><div style={{color:"#f87171",fontSize:"12px",padding:"10px",background:"rgba(220,38,38,0.08)",borderRadius:"8px",marginBottom:"12px"}}>{error}</div><button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff"})}>Tentar novamente</button></div>}
+                  <div style={{marginTop:"16px"}}><button onClick={function(){setRecStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Voltar</button></div>
+                </div>)}
+
+                {/* STEP 4: Review */}
+                {recStep==="review"&&(<div>
+                  <div style={{marginBottom:"16px"}}><div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Seção Estratégica</div><textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);}} rows={6} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px"})}/></div>
+                  <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Análises Individuais</div>
+                  {(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];}).sort(function(a,b){return(analyses[a.ticker].priority||3)-(analyses[b.ticker].priority||3);}).map(function(c){
+                    var an=analyses[c.ticker];
+                    var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24","NOVO":"#a78bfa"};
+                    return <div key={c.ticker} style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"8px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                          <span style={{fontWeight:800,fontSize:"14px",color:"#f1f5f9"}}>{c.ticker}</span>
+                          <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{c.name}</span>
+                          <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.25)"}}>P{an.priority||"?"}</span>
+                        </div>
+                        <select value={an.verdict||"AGUARDAR"} onChange={function(e){updateAnalysis(c.ticker,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"4px 8px",color:vc[an.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}>
+                          <option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option><option value="NOVO">NOVO</option>
+                        </select>
+                      </div>
+                      <div style={{marginBottom:"6px"}}><label style={lS}>Visão Geral</label><textarea value={an.overview||""} onChange={function(e){updateAnalysis(c.ticker,"overview",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
+                      <div style={{marginBottom:"6px"}}><label style={lS}>Fundamentos</label><textarea value={an.fundamentals||""} onChange={function(e){updateAnalysis(c.ticker,"fundamentals",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"6px"}}>
+                        <div><label style={lS}>Oportunidades</label><textarea value={(an.opportunities||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"opportunities",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
+                        <div><label style={lS}>Riscos</label><textarea value={(an.risks||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"risks",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
+                      </div>
+                      <div><label style={lS}>Recomendação</label><textarea value={an.recommendation||""} onChange={function(e){updateAnalysis(c.ticker,"recommendation",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
+                    </div>;
+                  })}
+                  <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
+                    <button onClick={function(){setRecStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
+                    <button onClick={function(){setRecStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir → PDF</button>
+                  </div>
+                </div>)}
+
+                {/* STEP 5: PDF */}
+                {recStep==="pdf"&&(<div style={{textAlign:"center",padding:"20px 0"}}>
+                  <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório pronto</div>
+                  <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {selCount} ativos · {period||"Mensal"}</div>
+                  <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar e Baixar PDF"}</button>
+                  <div style={{marginTop:"10px"}}><button onClick={function(){setRecStep("review");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Revisar</button></div>
+                </div>)}
+              </div>)}
             </div>)}
-            {generating&&(<div><div style={{fontSize:"28px",marginBottom:"10px"}}>&#9881;</div><div style={{fontSize:"12px",fontWeight:600,color:"#DC2626",marginBottom:"6px"}}>Gerando análise consultiva...</div><div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>{genProgress}</div></div>)}
-            {error&&!generating&&(<div><div style={{color:"#f87171",fontSize:"12px",padding:"10px",background:"rgba(220,38,38,0.08)",borderRadius:"8px",marginBottom:"12px"}}>{error}</div><button onClick={generateAnalysis} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff"})}>Tentar novamente</button></div>)}
-            <div style={{marginTop:"16px"}}><button onClick={function(){setStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592; Voltar</button></div>
-          </div>)}
+          </div>
+        </div>)}
 
-          {/* STEP 5: Review */}
-          {step==="review"&&(<div>
-            <div style={{marginBottom:"16px"}}><div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Seção Estratégica</div><textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);}} rows={6} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px"})}/></div>
-
-            <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Análises Individuais (ordenadas por prioridade)</div>
-
-            {(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];}).sort(function(a,b){return(analyses[a.ticker].priority||3)-(analyses[b.ticker].priority||3);}).map(function(c){
-              var an=analyses[c.ticker];
-              var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24","NOVO":"#a78bfa"};
-              return <div key={c.ticker} style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"8px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
-                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-                    <span style={{fontWeight:800,fontSize:"14px",color:"#f1f5f9"}}>{c.ticker}</span>
-                    <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{c.name} · {c.class}</span>
-                    <span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.25)"}}>P{an.priority||"?"}</span>
-                  </div>
-                  <select value={an.verdict||"AGUARDAR"} onChange={function(e){updateAnalysis(c.ticker,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"4px 8px",color:vc[an.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}>
-                    <option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option><option value="NOVO">NOVO</option>
-                  </select>
-                </div>
-                <div style={{marginBottom:"6px"}}><label style={lS}>Visão Geral</label><textarea value={an.overview||""} onChange={function(e){updateAnalysis(c.ticker,"overview",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
-                <div style={{marginBottom:"6px"}}><label style={lS}>Fundamentos</label><textarea value={an.fundamentals||""} onChange={function(e){updateAnalysis(c.ticker,"fundamentals",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"6px"}}>
-                  <div><label style={lS}>Oportunidades</label><textarea value={(an.opportunities||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"opportunities",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
-                  <div><label style={lS}>Riscos</label><textarea value={(an.risks||[]).join("\n")} onChange={function(e){updateAnalysis(c.ticker,"risks",e.target.value.split("\n").filter(function(l){return l.trim();}));}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"10px"})}/></div>
-                </div>
-                <div><label style={lS}>Recomendação</label><textarea value={an.recommendation||""} onChange={function(e){updateAnalysis(c.ticker,"recommendation",e.target.value);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px"})}/></div>
-              </div>;
-            })}
-
-            <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
-              <button onClick={function(){setStep("crossref");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592;</button>
-              <button onClick={function(){setStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Prosseguir → PDF</button>
-            </div>
-          </div>)}
-
-          {/* STEP 6: PDF */}
-          {step==="pdf"&&(<div style={{textAlign:"center",padding:"20px 0"}}>
-            <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório pronto</div>
-            <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {selCount} ativos · {period||"Trimestral"}</div>
-            <div style={{background:"#111",borderRadius:"10px",padding:"16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"16px",textAlign:"left",fontSize:"11px",color:"rgba(255,255,255,0.5)",lineHeight:1.8}}>
-              &#128196; Capa com nome do cliente e consultor<br/>
-              &#128202; Seção estratégica consolidada (tripé)<br/>
-              &#128200; {selCount} análises individuais (visão, fundamentos, oportunidades, riscos, recomendação) ordenadas por prioridade<br/>
-              &#128220; Disclaimer legal
-            </div>
-            <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar e Baixar PDF"}</button>
-            <div style={{marginTop:"10px"}}><button onClick={function(){setStep("review");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>&#8592; Revisar</button></div>
-          </div>)}
-
-        </div>
+        {!editingProfile && <div style={{padding:"40px 24px",textAlign:"center",color:"rgba(255,255,255,0.2)",fontSize:"12px"}}>Selecione um cliente acima para começar.</div>}
       </div>
     </div>
   );
 }
-
 
 export default function App() {
   var [data,setData]=useState(function(){return makeData();});
