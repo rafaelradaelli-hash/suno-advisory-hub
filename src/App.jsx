@@ -1008,6 +1008,224 @@ function ClientProfilesModal(p) {
   );
 }
 
+/* ─── Macro & Bias Module (Pilar 4) ─── */
+var SUNO_PROFILES = ["Conservador","Moderado","Dinâmico","Arrojado","Sofisticado","Defensivo","Intermediário","Longo Prazo"];
+var SUNO_BENCHMARKS = {"Conservador":"110%","Moderado":"115%","Dinâmico":"120%","Arrojado":"125%","Sofisticado":"130%","Defensivo":"125%","Intermediário":"130%","Longo Prazo":"135%"};
+var BIAS_CLASSES = [
+  {group:"Crédito",items:["Cash","Pós-fixado","Pré-fixado","IPCA+"]},
+  {group:"Equities",items:["FIIs","Alternativos","Ações Brasil"]},
+  {group:"Offshore",items:["Equities Offshore","Credit Offshore"]}
+];
+var ALL_BIAS_ITEMS = [];
+BIAS_CLASSES.forEach(function(g){g.items.forEach(function(it){ALL_BIAS_ITEMS.push(it);});});
+
+function loadMacroData() {
+  try { var s = localStorage.getItem("tt-macro"); if (s) return JSON.parse(s); } catch(e) {}
+  return { macroReport:"", macroDate:"", biasViews:{}, allocationTable:{} };
+}
+function saveMacroData(d) { try { localStorage.setItem("tt-macro", JSON.stringify(d)); } catch(e) {} }
+
+function MacroModal(p) {
+  var [macroData, setMacroData] = useState(function(){return loadMacroData();});
+  var [tab, setTab] = useState("report");
+  var [importing, setImporting] = useState(false);
+  var biasFileRef = useRef(null);
+
+  function save(updated) { setMacroData(updated); saveMacroData(updated); }
+
+  function setMacroReport(val) {
+    var u = Object.assign({}, macroData, {macroReport: val, macroDate: new Date().toISOString().slice(0,10)});
+    save(u);
+  }
+
+  function setBiasView(item, val) {
+    var u = Object.assign({}, macroData);
+    u.biasViews = Object.assign({}, u.biasViews || {});
+    u.biasViews[item] = parseInt(val) || 0;
+    save(u);
+  }
+
+  function setAllocCell(profile, item, field, val) {
+    var u = Object.assign({}, macroData);
+    u.allocationTable = Object.assign({}, u.allocationTable || {});
+    var key = profile + "||" + item;
+    u.allocationTable[key] = Object.assign({}, u.allocationTable[key] || {});
+    u.allocationTable[key][field] = parseFloat(val) || 0;
+    save(u);
+  }
+
+  function getAlloc(profile, item, field) {
+    var t = macroData.allocationTable || {};
+    var cell = t[profile + "||" + item];
+    return cell ? (cell[field] || 0) : 0;
+  }
+
+  async function handleBiasUpload(e) {
+    var f = e.target.files[0]; if (!f) return;
+    setImporting(true);
+    try {
+      var arrayBuf = await new Promise(function(res, rej) {
+        var r = new FileReader(); r.onload = function(){res(r.result);}; r.onerror = function(){rej(new Error("Erro"));}; r.readAsArrayBuffer(f);
+      });
+      var wb = XLSX.read(arrayBuf, {type:"array"});
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var raw = XLSX.utils.sheet_to_json(ws, {header:1, defval:""});
+
+      // Parse the table: find header row with profile names, then data rows
+      var u = Object.assign({}, macroData);
+      u.biasViews = Object.assign({}, u.biasViews || {});
+      u.allocationTable = Object.assign({}, u.allocationTable || {});
+
+      // Send to AI to parse the complex table structure
+      var tableText = raw.map(function(row){return row.join("\t");}).join("\n");
+
+      var resp = await fetch("/api/anthropic", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514", max_tokens:4096,
+          system:'Voce recebera uma tabela de alocacao por perfil de investidor. Extraia em JSON: {"views":{"Cash":-1,"Pós-fixado":-2,...},"allocations":{"Conservador||Cash":{"strategic":18,"tactical":16},"Conservador||Pós-fixado":{"strategic":35,"tactical":10},...}} Inclua TODOS os perfis (Conservador,Moderado,Dinâmico,Arrojado,Sofisticado,Defensivo,Intermediário,Longo Prazo) e TODAS as subclasses (Cash,Pós-fixado,Pré-fixado,IPCA+,FIIs,Alternativos,Ações Brasil,Equities Offshore,Credit Offshore). Views sao a coluna "View" com valores de -2 a +2. Strategic e Tactical sao as colunas "Estratégico" e "Tático" de cada perfil (numeros inteiros sem %). JSON puro sem markdown.',
+          messages:[{role:"user",content:"Tabela:\n"+tableText}]
+        })
+      });
+      if (!resp.ok) throw new Error("API " + resp.status);
+      var d = await resp.json();
+      var rawText = "";
+      for (var i=0;i<d.content.length;i++){if(d.content[i].text)rawText+=d.content[i].text;}
+      rawText = rawText.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      var si=rawText.indexOf("{");var ei=rawText.lastIndexOf("}");
+      if(si>=0&&ei>si)rawText=rawText.slice(si,ei+1);
+      rawText=rawText.replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+      var parsed = JSON.parse(rawText);
+
+      if (parsed.views) u.biasViews = parsed.views;
+      if (parsed.allocations) {
+        Object.keys(parsed.allocations).forEach(function(key){
+          u.allocationTable[key] = parsed.allocations[key];
+        });
+      }
+      save(u);
+    } catch(err) { console.error(err); alert("Erro ao importar: " + err.message); }
+    setImporting(false);
+  }
+
+  var iS={width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"8px",padding:"8px 10px",color:"#e2e8f0",fontSize:"12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  var lS={fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)",marginBottom:"4px",display:"block"};
+  var biasColors = {"-2":"#ef4444","-1":"#f97316","0":"#94a3b8","1":"#22c55e","2":"#10b981"};
+  var biasLabels = {"-2":"Muito Pessimista","-1":"Pessimista","0":"Neutro","1":"Otimista","2":"Muito Otimista"};
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(251,191,36,0.15)",width:"100%",maxWidth:"900px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
+        <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
+          <div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Macro & Viés Tático</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Pilar 4 — Visão macroeconômica e alocação tática da Suno</div>
+          </div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+        </div>
+
+        <div style={{display:"flex",gap:"2px",padding:"10px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+          {[{k:"report",l:"Relatório Macro"},{k:"bias",l:"Viés & Alocação"}].map(function(t){
+            return <button key={t.k} onClick={function(){setTab(t.k);}} style={{padding:"8px 16px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t.k?"rgba(251,191,36,0.12)":"transparent",color:tab===t.k?"#fbbf24":"rgba(255,255,255,0.3)"}}>{t.l}</button>;
+          })}
+        </div>
+
+        <div style={{padding:"20px 24px 24px"}}>
+          {tab==="report"&&(<div>
+            <label style={lS}>Relatório Macroeconômico da Suno {macroData.macroDate && <span style={{color:"rgba(255,255,255,0.2)"}}>(atualizado: {macroData.macroDate})</span>}</label>
+            <textarea value={macroData.macroReport||""} onChange={function(e){setMacroReport(e.target.value);}} rows={16} placeholder="Cole aqui o texto do relatório macro da Suno. Inclua visão sobre Selic, inflação, câmbio, ciclo econômico, perspectivas por classe de ativo, etc. A IA usará este contexto para personalizar as recomendações de todos os clientes." style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px",minHeight:"300px"})}/>
+            <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)",marginTop:"6px"}}>Atualize quando a Suno publicar um novo relatório macro. Salvo automaticamente.</div>
+          </div>)}
+
+          {tab==="bias"&&(<div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+              <div>
+                <div style={{fontSize:"12px",fontWeight:700,color:"#fff"}}>Tabela de Viés & Alocação por Perfil</div>
+                <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>Escala: -2 (muito pessimista) a +2 (muito otimista)</div>
+              </div>
+              <label style={{padding:"7px 14px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",background:"rgba(251,191,36,0.06)",color:"#fbbf24",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>
+                {importing?"Importando...":"Importar Excel"}
+                <input ref={biasFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleBiasUpload} style={{display:"none"}}/>
+              </label>
+            </div>
+
+            {/* Bias views */}
+            <div style={{marginBottom:"16px"}}>
+              <div style={{fontSize:"9px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>View atual por classe</div>
+              {BIAS_CLASSES.map(function(group){
+                return <div key={group.group} style={{marginBottom:"8px"}}>
+                  <div style={{fontSize:"10px",fontWeight:700,color:"rgba(255,255,255,0.5)",marginBottom:"4px"}}>{group.group}</div>
+                  {group.items.map(function(item){
+                    var v = (macroData.biasViews||{})[item] || 0;
+                    return <div key={item} style={{display:"flex",alignItems:"center",gap:"8px",padding:"4px 0"}}>
+                      <span style={{fontSize:"11px",color:"rgba(255,255,255,0.6)",width:"120px"}}>{item}</span>
+                      <div style={{display:"flex",gap:"3px"}}>
+                        {[-2,-1,0,1,2].map(function(bv){
+                          var active = v === bv;
+                          return <button key={bv} onClick={function(){setBiasView(item,bv);}} style={{width:"32px",height:"24px",borderRadius:"4px",border:active?"2px solid "+biasColors[String(bv)]:"1px solid rgba(255,255,255,0.06)",background:active?biasColors[String(bv)]+"22":"rgba(255,255,255,0.02)",color:active?biasColors[String(bv)]:"rgba(255,255,255,0.25)",fontSize:"10px",fontWeight:700,cursor:"pointer"}}>{bv>0?"+"+bv:bv}</button>;
+                        })}
+                      </div>
+                      <span style={{fontSize:"9px",color:biasColors[String(v)],fontWeight:600}}>{biasLabels[String(v)]}</span>
+                    </div>;
+                  })}
+                </div>;
+              })}
+            </div>
+
+            {/* Allocation table */}
+            <div style={{fontSize:"9px",fontWeight:700,color:"#fbbf24",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"8px"}}>Alocação Estratégica vs Tática por Perfil</div>
+            <div style={{overflow:"auto",marginBottom:"8px"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:"9px",minWidth:"800px"}}>
+                <thead>
+                  <tr>
+                    <th style={{textAlign:"left",padding:"4px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,borderBottom:"1px solid rgba(255,255,255,0.08)"}}>Classe</th>
+                    <th style={{textAlign:"center",padding:"4px 3px",color:"rgba(255,255,255,0.3)",fontWeight:600,borderBottom:"1px solid rgba(255,255,255,0.08)"}}>View</th>
+                    {SUNO_PROFILES.map(function(pr){
+                      return <th key={pr} colSpan={2} style={{textAlign:"center",padding:"4px 3px",color:"#fbbf24",fontWeight:700,borderBottom:"1px solid rgba(255,255,255,0.08)",fontSize:"8px"}}>{pr}<br/><span style={{color:"rgba(255,255,255,0.2)",fontWeight:400}}>{SUNO_BENCHMARKS[pr]}</span></th>;
+                    })}
+                  </tr>
+                  <tr>
+                    <th style={{borderBottom:"1px solid rgba(255,255,255,0.06)"}}></th>
+                    <th style={{borderBottom:"1px solid rgba(255,255,255,0.06)"}}></th>
+                    {SUNO_PROFILES.map(function(pr){
+                      return [
+                        <th key={pr+"e"} style={{textAlign:"center",padding:"2px",color:"rgba(255,255,255,0.2)",fontSize:"7px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>Estr</th>,
+                        <th key={pr+"t"} style={{textAlign:"center",padding:"2px",color:"rgba(255,255,255,0.2)",fontSize:"7px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>Tát</th>
+                      ];
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {BIAS_CLASSES.map(function(group){
+                    return [
+                      <tr key={group.group+"h"}><td colSpan={2+SUNO_PROFILES.length*2} style={{padding:"4px 6px",fontWeight:700,color:"rgba(255,255,255,0.5)",fontSize:"9px",borderBottom:"1px solid rgba(255,255,255,0.04)",background:"rgba(255,255,255,0.02)"}}>{group.group}</td></tr>
+                    ].concat(group.items.map(function(item){
+                      var v = (macroData.biasViews||{})[item] || 0;
+                      return <tr key={item}>
+                        <td style={{padding:"3px 6px",color:"rgba(255,255,255,0.5)",borderBottom:"1px solid rgba(255,255,255,0.03)"}}>{item}</td>
+                        <td style={{textAlign:"center",padding:"3px",color:biasColors[String(v)],fontWeight:700,borderBottom:"1px solid rgba(255,255,255,0.03)"}}>{v>0?"+"+v:v}</td>
+                        {SUNO_PROFILES.map(function(pr){
+                          var es = getAlloc(pr,item,"strategic");
+                          var ta = getAlloc(pr,item,"tactical");
+                          return [
+                            <td key={pr+"e"} style={{textAlign:"center",padding:"2px",borderBottom:"1px solid rgba(255,255,255,0.03)"}}><input value={es||""} onChange={function(e){setAllocCell(pr,item,"strategic",e.target.value);}} type="number" style={{width:"32px",background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.04)",borderRadius:"3px",color:"rgba(255,255,255,0.4)",fontSize:"9px",textAlign:"center",padding:"2px",outline:"none"}}/></td>,
+                            <td key={pr+"t"} style={{textAlign:"center",padding:"2px",borderBottom:"1px solid rgba(255,255,255,0.03)"}}><input value={ta||""} onChange={function(e){setAllocCell(pr,item,"tactical",e.target.value);}} type="number" style={{width:"32px",background:"rgba(251,191,36,0.03)",border:"1px solid rgba(251,191,36,0.08)",borderRadius:"3px",color:"#fbbf24",fontSize:"9px",textAlign:"center",padding:"2px",outline:"none"}}/></td>
+                          ];
+                        })}
+                      </tr>;
+                    }));
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{fontSize:"9px",color:"rgba(255,255,255,0.2)"}}>Dica: Importe o Excel da tabela de alocação para preencher automaticamente. Ou edite manualmente cada célula.</div>
+          </div>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Consultive Report Module v2 — Tripod Architecture ─── */
 var CONSULT_STEPS = ["profile","journey","position","crossref","generate","review","pdf"];
 var STEP_LABELS = {profile:"1. Cliente",journey:"2. Journey Book",position:"3. Posição Atual",crossref:"4. Cruzamento",generate:"5. Análise IA",review:"6. Revisar",pdf:"7. PDF"};
@@ -1399,11 +1617,41 @@ function ConsultiveReportModal(p) {
   async function generateAnalysis() {
     var selected = (crossrefData || []).filter(function(c) { return selectedAssets[c.ticker]; });
     if (selected.length === 0) return;
-    setGenerating(true); setError(""); setGenProgress("Preparando análise com tripé completo...");
+    setGenerating(true); setError(""); setGenProgress("Preparando análise com os 4 pilares...");
 
     try {
       var profileCtx = buildProfileContext();
       var journeyCtx = buildJourneyContext();
+
+      // Build macro context (Pilar 4)
+      var macroCtx = "";
+      var md = loadMacroData();
+      if (md.macroReport || (md.biasViews && Object.keys(md.biasViews).length > 0)) {
+        var mp = ["PILAR 4 — VISAO MACRO E VIES TATICO DA SUNO:"];
+        if (md.macroReport) mp.push("RELATORIO MACRO:\n" + md.macroReport.slice(0, 8000));
+        if (md.biasViews && Object.keys(md.biasViews).length > 0) {
+          mp.push("\nVIES TATICO POR CLASSE (escala -2=muito pessimista a +2=muito otimista):");
+          Object.keys(md.biasViews).forEach(function(cls) {
+            var v = md.biasViews[cls];
+            var lbl = v <= -2 ? "muito pessimista" : v === -1 ? "pessimista" : v === 0 ? "neutro" : v === 1 ? "otimista" : "muito otimista";
+            mp.push("  " + cls + ": " + (v > 0 ? "+" : "") + v + " (" + lbl + ")");
+          });
+          mp.push("INSTRUCAO: Priorize aportes em classes com vies POSITIVO (+1 ou +2). Reduza prioridade de classes com vies NEGATIVO (-1 ou -2). Classes com vies 0 seguem a alocacao estrategica normal.");
+        }
+        // Add profile-specific tactical allocation if available
+        if (editingProfile && md.allocationTable && Object.keys(md.allocationTable).length > 0) {
+          var profileName = editingProfile.riskProfile || "Arrojado";
+          var hasData = Object.keys(md.allocationTable).some(function(k){return k.indexOf(profileName) === 0;});
+          if (hasData) {
+            mp.push("\nALOCACAO TATICA PARA PERFIL " + profileName.toUpperCase() + ":");
+            ALL_BIAS_ITEMS.forEach(function(item) {
+              var cell = md.allocationTable[profileName + "||" + item];
+              if (cell) mp.push("  " + item + ": estrategico=" + (cell.strategic||0) + "%, tatico=" + (cell.tactical||0) + "%");
+            });
+          }
+        }
+        macroCtx = mp.join("\n");
+      }
 
       // Build per-asset context
       var assetsCtx = selected.map(function(c) {
@@ -1445,6 +1693,7 @@ function ConsultiveReportModal(p) {
           + ' Voce recebera 3 pilares de informacao para gerar recomendacoes PERSONALIZADAS e FUNDAMENTADAS:'
           + ' PILAR 1 (Inteligencia Suno): teses de investimento, ultimos resultados trimestrais com nota, sentimento e visao da Suno para cada ativo — campo "appData" de cada ativo.'
           + ' PILAR 2 (Journey Book): estrategia NORTEADORA definida entre cliente e consultor. Inclui alocacao-alvo por classe, ativos recomendados com precos-teto e racionais fundamentalistas. IMPORTANTE: As movimentacoes previstas no JB sao apenas indicativas e NAO devem ser usadas como recomendacao direta. Voce deve criar sua PROPRIA recomendacao com base no caixa disponivel REAL do cliente, na estrategia do JB, nos resultados mais recentes dos ativos e no perfil do cliente.'
+          + ' PILAR 4 (Macro & Viés Tático): Se fornecido, contem o relatorio macroeconomico da Suno e a escala de vies tatico por classe de ativos (-2 a +2). Use o vies para AJUSTAR TATICAMENTE as prioridades: classes com vies positivo (+1/+2) devem ter prioridade maior nos aportes; classes com vies negativo (-1/-2) devem ter prioridade reduzida MESMO que o cliente esteja sub-alocado nessa classe. Siga principios de VALUE INVESTING: priorize ativos com maior margem de seguranca (desconto vs preco-teto) e melhores fundamentos recentes.'
           + ' PILAR 3 (Perfil do Investidor): dados pessoais, financeiros, perfil de risco, horizonte, objetivos de longo prazo e estrategia.'
           + ' Com base nos 3 pilares, para CADA ativo gere:'
           + ' 1) "overview": 2-3 frases contextualizando o ativo na carteira deste cliente especifico. Mencione se esta na carteira atual ou e entrada nova, valor sugerido, % da carteira, e como se encaixa no perfil/estrategia.'
@@ -1457,7 +1706,7 @@ function ConsultiveReportModal(p) {
           + ' Use dados concretos. Seja profissional e direto. Personalize para ESTE cliente.'
           + ' Responda SOMENTE com JSON puro: [{"ticker":"","overview":"","fundamentals":"","opportunities":[""],"risks":[""],"recommendation":"","verdict":"","priority":3}]';
 
-        var userMsg = profileCtx + "\n\n" + journeyCtx + "\n\nATIVOS PARA ANALISE:\n" + JSON.stringify(batch, null, 0);
+        var userMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + "\n\nATIVOS PARA ANALISE:\n" + JSON.stringify(batch, null, 0);
 
         var resp = await fetch("/api/anthropic", {
           method: "POST", headers: {"Content-Type":"application/json"},
@@ -1489,7 +1738,7 @@ function ConsultiveReportModal(p) {
         + ' Inclua: 1) Visao geral da carteira e adequacao ao perfil do cliente (perfil de risco, horizonte, objetivos). 2) Aderencia a estrategia do Journey Book — a carteira esta convergindo para as metas de alocacao? Quais classes precisam de ajuste? 3) Destaques positivos e pontos de atencao baseados nos resultados mais recentes dos ativos. 4) PLANO DE APORTES CONCRETO: com base no caixa disponivel REAL do cliente, sugira como distribuir os aportes entre os ativos, priorizando por preco-teto, nota do resultado e aderencia a estrategia. Use valores em reais. 5) Projecao de impacto: como os aportes sugeridos aproximam o cliente da meta de longo prazo.'
         + ' Escreva em 4-6 paragrafos. Profissional, direto, personalizado. Use numeros concretos. Sem markdown.';
 
-      var stratMsg = profileCtx + "\n\n" + journeyCtx + "\n\nANALISES:\n" + JSON.stringify(stratCtx, null, 0);
+      var stratMsg = profileCtx + "\n\n" + journeyCtx + (macroCtx ? "\n\n" + macroCtx : "") + "\n\nANALISES:\n" + JSON.stringify(stratCtx, null, 0);
 
       var stratResp = await fetch("/api/anthropic", {
         method: "POST", headers: {"Content-Type":"application/json"},
@@ -1853,6 +2102,7 @@ export default function App() {
   var [showReport,setShowReport]=useState(false);
   var [showConsultive,setShowConsultive]=useState(false);
   var [showClientProfiles,setShowClientProfiles]=useState(false);
+  var [showMacro,setShowMacro]=useState(false);
 
   useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
   useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
@@ -1969,8 +2219,9 @@ export default function App() {
             <div><h1 style={{margin:0,fontSize:"22px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1><p style={{margin:0,color:"rgba(255,255,255,0.2)",fontSize:"10px",letterSpacing:"0.5px"}}>Central de Consultoria Inteligente</p></div>
           </div>
           <div style={{display:"flex",gap:"6px"}}>
-            <button onClick={function(){setShowClientProfiles(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Perfis de Clientes">Clientes</button>
-            <button onClick={function(){setShowConsultive(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"11px"}} title="Relatório Consultivo">Consultivo</button>
+            <button onClick={function(){setShowClientProfiles(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",cursor:"pointer",background:"rgba(255,255,255,0.02)",color:"rgba(255,255,255,0.45)",fontWeight:600,fontSize:"10px"}} title="Perfis de Clientes">Clientes</button>
+            <button onClick={function(){setShowMacro(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",background:"rgba(251,191,36,0.04)",color:"#fbbf24",fontWeight:700,fontSize:"10px"}} title="Macro & Viés Tático">Macro</button>
+            <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório Consultivo">Consultivo</button>
             <button onClick={function(){setShowReport(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Panorama de Resultados">Panorama</button>
             <button onClick={function(){setShowCfg(!showCfg);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:showCfg?"rgba(255,255,255,0.07)":"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"13px"}} title="Configurações">&#9881;</button>
             <button onClick={function(){setPanel(!panel);}} style={{padding:"8px 18px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"11px"}}>{panel?"Fechar":"+ Adicionar"}</button>
@@ -2032,6 +2283,7 @@ export default function App() {
       {showReport&&<ReportModal data={data} onClose={function(){setShowReport(false);}}/>}
       {showConsultive&&<ConsultiveReportModal data={data} onClose={function(){setShowConsultive(false);}}/>}
       {showClientProfiles&&<ClientProfilesModal onClose={function(){setShowClientProfiles(false);}}/>}
+      {showMacro&&<MacroModal onClose={function(){setShowMacro(false);}}/>}
     </div>
   );
 }
