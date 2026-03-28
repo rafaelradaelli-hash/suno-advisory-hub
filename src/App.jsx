@@ -1900,10 +1900,76 @@ function ConsultiveReportModal(p) {
       a.appMatch = appMatch ? { thesis: appMatch.thesis, result: appMatch.result, resultPros: (appMatch.resultPros||[]).slice(0,5), resultCons: (appMatch.resultCons||[]).slice(0,5), sunoView: appMatch.sunoView, sentiment: appMatch.sentiment, quarter: appMatch.quarter, rankScore: appMatch.rankScore, portfolio: appMatch._portfolio } : null;
       a.hasAppData = !!appMatch;
       a.carteiraSuno = cartMatch;
+      // Calculate % of portfolio: JB suggested vs current position
+      a.jbPercent = a.suggestedPercent || 0; // from JB suggestedPortfolio
+      var posTotal = posAssets.reduce(function(s,x){return s+(x.totalValue||0);},0);
+      a.posPercent = (posMatch && posTotal > 0) ? (posMatch.totalValue / posTotal * 100) : 0;
       return a;
     });
     result.sort(function(x,y) { var ra = x.carteiraSuno?(x.carteiraSuno.rank||999):999; var rb = y.carteiraSuno?(y.carteiraSuno.rank||999):999; return ra !== rb ? ra - rb : (x.ticker||"").localeCompare(y.ticker||""); });
     setCrossrefData(result); setSelectedAssets({}); setAnalyses({}); setRecStep("select");
+  }
+
+  // ── Context builders ──
+  function buildProfileContext() {
+    if (!editingProfile) return "";
+    var pr = editingProfile;
+    var parts = ["PERFIL DO CLIENTE:"];
+    if (pr.name) parts.push("Nome: " + pr.name);
+    if (pr.age) parts.push("Idade: " + pr.age + " anos");
+    if (pr.profession) parts.push("Profissao: " + pr.profession);
+    if (pr.totalWealth) parts.push("Patrimonio: R$ " + parseFloat(pr.totalWealth).toLocaleString("pt-BR"));
+    if (pr.monthlyIncome) parts.push("Renda: R$ " + parseFloat(pr.monthlyIncome).toLocaleString("pt-BR"));
+    if (pr.monthlyContribution) parts.push("Aporte mensal: R$ " + parseFloat(pr.monthlyContribution).toLocaleString("pt-BR"));
+    parts.push("Perfil: " + (pr.riskProfile || "Moderado"));
+    if (pr.horizon) parts.push("Horizonte: " + pr.horizon + " anos");
+    if (pr.longTermGoals) parts.push("Objetivos: " + pr.longTermGoals);
+    if (pr.strategy) parts.push("Estrategia: " + pr.strategy);
+    var alloc = pr.allocation || {};
+    var ap = []; ALLOC_CLASSES.forEach(function(cls) {
+      var a = alloc[cls] || {target:0,current:0};
+      ap.push(cls + ": meta=" + a.target + "%, atual=" + a.current + "%");
+    });
+    if (ap.length > 0) parts.push("Alocacao: " + ap.join("; "));
+    return parts.join("\n");
+  }
+
+  function buildJourneyContext() {
+    var jbd = editingProfile ? editingProfile.jbData : null;
+    if (!jbd) return "";
+    var parts = ["JOURNEY BOOK:"];
+    if (jbd.projections) {
+      var pj = jbd.projections;
+      if (pj.capitalAtRetirement) parts.push("Capital projetado: R$ " + pj.capitalAtRetirement.toLocaleString("pt-BR"));
+      if (pj.percentMeta) parts.push("Meta: " + pj.percentMeta + "%");
+    }
+    if (jbd.allocationMacro && jbd.allocationMacro.classes) {
+      parts.push("ALOCACAO:");
+      jbd.allocationMacro.classes.forEach(function(c) {
+        parts.push("  " + c.name + ": " + c.currentPercent + "% → " + c.suggestedPercent + "%");
+      });
+    }
+    if (posAssets.length > 0 || availableCash) {
+      parts.push("POSICAO ATUAL:");
+      if (availableCash) parts.push("Caixa: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
+      posAssets.forEach(function(a) {
+        parts.push("  " + a.ticker + ": Qtd=" + a.qty + ", PM=R$" + (a.avgPrice||0).toFixed(2) + ", Total=R$" + (a.totalValue||0).toLocaleString("pt-BR"));
+      });
+    }
+    return parts.join("\n");
+  }
+
+  function buildCarteirasContext() {
+    var cartCtx = [];
+    (carteirasData.carteiras || []).forEach(function(cart) {
+      var ativos = carteirasData.ativos[cart.id] || [];
+      if (ativos.length === 0) return;
+      cartCtx.push("CARTEIRA " + cart.name.toUpperCase() + ":");
+      ativos.forEach(function(a) {
+        cartCtx.push("  #" + (a.rank||"?") + " " + a.ticker + " Teto:" + (a.precoTeto!=null?(cart.intl?"US$":"R$")+a.precoTeto:"N/A") + " " + (a.vies||""));
+      });
+    });
+    return cartCtx.length > 0 ? "CARTEIRAS SUNO:\n" + cartCtx.join("\n") : "";
   }
 
   function buildMacroCtxShort() {
@@ -2280,10 +2346,15 @@ function ConsultiveReportModal(p) {
                           <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
                           <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",minWidth:"50px"}}>{c.ticker}</span>
                           <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                          {/* JB% vs Pos% */}
+                          <div style={{display:"flex",gap:"2px",alignItems:"center",flexShrink:0}}>
+                            {c.jbPercent>0&&<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(96,165,250,0.1)",color:"#60a5fa",fontWeight:600}}>{c.jbPercent.toFixed(1)}%</span>}
+                            {c.jbPercent>0&&c.posPercent>=0&&<span style={{fontSize:"7px",color:"rgba(255,255,255,0.15)"}}>→</span>}
+                            {c.posPercent>0?<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",fontWeight:600}}>{c.posPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.2)"}}>—</span>}
+                          </div>
                           {c.carteiraSuno&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:vC+"18",color:vC,fontWeight:600,flexShrink:0}}>#{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
                           {c.appMatch&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:c.appMatch.sentiment==="positive"?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8",flexShrink:0}}>{c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1):""}</span>}
                           {c.deltaCeiling!=null&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",color:c.deltaCeiling>0?"#4ade80":"#f87171",fontWeight:600,flexShrink:0}}>{c.deltaCeiling>0?"+":""}{c.deltaCeiling}%</span>}
-                          {c.hasPosition&&<span style={{fontSize:"7px",color:"#fbbf24",flexShrink:0}}>●</span>}
                         </div>;
                       })}
                     </div>
