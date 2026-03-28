@@ -552,10 +552,12 @@ function AddPanel(p) {
 /* ─── Report PDF Generator ─── */
 function ReportModal(p) {
   var [clientName, setClientName] = useState("");
-  var [consultorName, setConsultorName] = useState("");
+  var [consultorName, setConsultorName] = useState("Rafael Manfroi Radaelli");
   var [selTickers, setSelTickers] = useState({});
   var [fields, setFields] = useState({tese:true,resultado:true,thesisPros:true,thesisCons:true,resultPros:true,resultCons:true,sunoView:true,nota:true});
   var [generating, setGenerating] = useState(false);
+  var [genProgress, setGenProgress] = useState("");
+  var [writingTone, setWritingTone] = useState("simples");
 
   var allStocks = [];
   ["Dividendos","Valor","Small Caps","Internacional"].forEach(function(port){
@@ -569,10 +571,73 @@ function ReportModal(p) {
 
   var selCount = Object.keys(selTickers).length;
 
+  // AI rewrite helper - rewrites text fields in selected tone
+  async function rewriteTexts(stocks) {
+    if (writingTone === "profissional") return stocks; // Original texts are already professional
+    setGenProgress("Adaptando textos ao tom selecionado...");
+    var batchSize = 5;
+    var rewritten = stocks.map(function(s){return Object.assign({},s);});
+    for (var b = 0; b < rewritten.length; b += batchSize) {
+      var batch = rewritten.slice(b, b + batchSize);
+      setGenProgress("Adaptando " + batch.map(function(s){return s.ticker;}).join(", ") + "...");
+      var toRewrite = batch.map(function(s){
+        return {
+          ticker: s.ticker,
+          thesis: fields.tese ? (s.thesis||"") : "",
+          result: fields.resultado ? (s.result||"") : "",
+          sunoView: fields.sunoView ? (s.sunoView||"") : "",
+          thesisPros: fields.thesisPros ? (s.thesisPros||[]) : [],
+          thesisCons: fields.thesisCons ? (s.thesisCons||[]) : [],
+          resultPros: fields.resultPros ? (s.resultPros||[]) : [],
+          resultCons: fields.resultCons ? (s.resultCons||[]) : []
+        };
+      });
+      try {
+        var sys = 'Reescreva os textos de investimento no tom solicitado. Mantenha TODOS os dados numericos e fatos. Apenas mude a linguagem.\n\nTOM: ' + getToneInstruction(writingTone, false)
+          + '\n\nResponda SOMENTE com JSON puro: [{"ticker":"","thesis":"","result":"","sunoView":"","thesisPros":[""],"thesisCons":[""],"resultPros":[""],"resultCons":[""]}]';
+        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:sys,messages:[{role:"user",content:JSON.stringify(toRewrite)}]})});
+        if (resp.ok) {
+          var d = await resp.json();
+          var raw = "";
+          for (var i=0;i<(d.content||[]).length;i++){if(d.content[i].type==="text"&&d.content[i].text)raw+=d.content[i].text;}
+          raw=raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+          var si=raw.indexOf("[");var ei=raw.lastIndexOf("]");
+          if(si>=0&&ei>si){
+            var parsed=JSON.parse(raw.slice(si,ei+1));
+            parsed.forEach(function(rw){
+              for(var ri=b;ri<Math.min(b+batchSize,rewritten.length);ri++){
+                if(rewritten[ri].ticker===rw.ticker){
+                  if(rw.thesis)rewritten[ri].thesis=rw.thesis;
+                  if(rw.result)rewritten[ri].result=rw.result;
+                  if(rw.sunoView)rewritten[ri].sunoView=rw.sunoView;
+                  if(rw.thesisPros&&rw.thesisPros.length)rewritten[ri].thesisPros=rw.thesisPros;
+                  if(rw.thesisCons&&rw.thesisCons.length)rewritten[ri].thesisCons=rw.thesisCons;
+                  if(rw.resultPros&&rw.resultPros.length)rewritten[ri].resultPros=rw.resultPros;
+                  if(rw.resultCons&&rw.resultCons.length)rewritten[ri].resultCons=rw.resultCons;
+                  break;
+                }
+              }
+            });
+          }
+        }
+      } catch(err) { console.error("Rewrite error:", err); }
+    }
+    return rewritten;
+  }
+
   async function generate() {
     if (selCount === 0) return;
-    setGenerating(true);
+    setGenerating(true); setGenProgress("Preparando...");
     try {
+      var selected=allStocks.filter(function(s){return selTickers[s.ticker];});
+      selected.sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
+
+      // Rewrite in selected tone if not professional
+      if (writingTone !== "profissional") {
+        selected = await rewriteTexts(selected);
+      }
+
+      setGenProgress("Gerando PDF...");
       var doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
       var W = 210; var H = 297; var ML = 24; var MR = 20; var CW = W - ML - MR;
       var y = 0;
@@ -631,9 +696,6 @@ function ReportModal(p) {
       setF(C.accent);doc.rect(0,H-1,W,1,"F");
 
       // STOCKS
-      var selected=allStocks.filter(function(s){return selTickers[s.ticker];});
-      selected.sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
-
       var curPort="";
       for(var si=0;si<selected.length;si++){
         var s=selected[si];
@@ -731,10 +793,10 @@ function ReportModal(p) {
       console.error(err);
       alert("Erro ao gerar PDF: "+err.message);
     }
-    setGenerating(false);
+    setGenerating(false); setGenProgress("");
   }
 
-  var iS = {width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"8px",padding:"8px 10px",color:"#e2e8f0",fontSize:"12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  var iS = {width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"8px",padding:"10px 12px",color:"#e2e8f0",fontSize:"13px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
   var lS = {fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)",marginBottom:"4px",display:"block"};
 
   var fieldOpts = [
@@ -745,7 +807,7 @@ function ReportModal(p) {
 
   return (
     <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
-      <div style={{background:p.inline?"transparent":"#111",borderRadius:p.inline?"0":"14px",border:p.inline?"none":"1px solid rgba(255,255,255,0.08)",width:"100%",maxWidth:"600px",maxHeight:p.inline?"none":"90vh",overflow:"auto",padding:"24px",margin:p.inline?"0 auto":"0"}}>
+      <div style={{background:p.inline?"transparent":"#111",borderRadius:p.inline?"0":"14px",border:p.inline?"none":"1px solid rgba(255,255,255,0.08)",width:"100%",maxWidth:"650px",maxHeight:p.inline?"none":"90vh",overflow:"auto",padding:p.inline?"16px 24px 24px":"24px",margin:p.inline?"0 auto":"0"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"16px"}}>
           <div>
             <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Panorama de Resultados</div>
@@ -754,29 +816,33 @@ function ReportModal(p) {
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"18px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>&#10005;</button>
         </div>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"10px",marginBottom:"14px"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(200px, 1fr))",gap:"10px",marginBottom:"14px"}}>
           <div><label style={lS}>Nome do Cliente</label><input value={clientName} onChange={function(e){setClientName(e.target.value);}} placeholder="Ex: João Silva" style={iS}/></div>
           <div><label style={lS}>Nome do Consultor</label><input value={consultorName} onChange={function(e){setConsultorName(e.target.value);}} placeholder="Ex: Rafael Radaelli" style={iS}/></div>
         </div>
 
         <div style={{marginBottom:"14px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-            <label style={Object.assign({},lS,{marginBottom:0})}>Campos do relatório</label>
-          </div>
+          <label style={Object.assign({},lS,{marginBottom:"6px"})}>Tom do texto no PDF</label>
+          <ToneSelector value={writingTone} onChange={setWritingTone} color="#ef4444"/>
+          {writingTone!=="profissional"&&<div style={{fontSize:"9px",color:"rgba(251,191,36,0.5)",marginTop:"4px"}}>A IA vai adaptar os textos para o tom "{writingTone==="simples"?"Simples":"Intermediário"}" antes de gerar o PDF</div>}
+        </div>
+
+        <div style={{marginBottom:"14px"}}>
+          <label style={Object.assign({},lS,{marginBottom:"6px"})}>Campos do relatório</label>
           <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
-            {fieldOpts.map(function(f){return <button key={f.k} onClick={function(){toggleField(f.k);}} style={{padding:"4px 10px",borderRadius:"12px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:fields[f.k]?"rgba(220,38,38,0.15)":"rgba(255,255,255,0.03)",color:fields[f.k]?"#DC2626":"rgba(255,255,255,0.3)"}}>{f.l}</button>;})}
+            {fieldOpts.map(function(f){return <button key={f.k} onClick={function(){toggleField(f.k);}} style={{padding:"5px 11px",borderRadius:"12px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:fields[f.k]?"rgba(220,38,38,0.15)":"rgba(255,255,255,0.03)",color:fields[f.k]?"#DC2626":"rgba(255,255,255,0.3)"}}>{f.l}</button>;})}
           </div>
         </div>
 
         <div style={{marginBottom:"14px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px",flexWrap:"wrap",gap:"6px"}}>
             <label style={Object.assign({},lS,{marginBottom:0})}>Empresas ({selCount} selecionadas)</label>
-            <div style={{display:"flex",gap:"6px"}}>
+            <div style={{display:"flex",gap:"8px"}}>
               <button onClick={selectAll} style={{fontSize:"10px",color:"rgba(74,222,128,0.7)",background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Todas</button>
               <button onClick={selectNone} style={{fontSize:"10px",color:"rgba(248,113,113,0.7)",background:"transparent",border:"none",cursor:"pointer",fontWeight:600}}>Nenhuma</button>
             </div>
           </div>
-          <div style={{maxHeight:"220px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"6px"}}>
+          <div style={{maxHeight:"260px",overflow:"auto",background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",padding:"6px",WebkitOverflowScrolling:"touch"}}>
             {["Dividendos","Valor","Small Caps","Internacional"].map(function(port){
               var ps = (p.data[port]||[]).slice().sort(function(a,b){return (b.rankScore||0)-(a.rankScore||0);});
               if (ps.length === 0) return null;
@@ -785,11 +851,11 @@ function ReportModal(p) {
                 {ps.map(function(s){
                   var checked = !!selTickers[s.ticker];
                   var scColor = (s.rankScore||0)>=8?"#4ade80":(s.rankScore||0)>=5?"#fbbf24":"#f87171";
-                  return <div key={s.ticker} onClick={function(){toggleTicker(s.ticker);}} style={{display:"flex",alignItems:"center",gap:"8px",padding:"5px 6px",cursor:"pointer",borderRadius:"6px",background:checked?"rgba(220,38,38,0.08)":"transparent"}}>
-                    <div style={{width:"16px",height:"16px",borderRadius:"4px",border:checked?"2px solid #DC2626":"2px solid rgba(255,255,255,0.15)",background:checked?"#DC2626":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"10px",color:"#fff",flexShrink:0}}>{checked?"✓":""}</div>
-                    <span style={{fontSize:"11px",fontWeight:600,color:"#f1f5f9",minWidth:"55px"}}>{s.ticker}</span>
-                    <span style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",flex:1}}>{s.name}</span>
-                    {s.rankScore&&<span style={{fontSize:"10px",fontWeight:700,color:scColor}}>{s.rankScore.toFixed(1)}</span>}
+                  return <div key={s.ticker} onClick={function(){toggleTicker(s.ticker);}} style={{display:"flex",alignItems:"center",gap:"8px",padding:"6px",cursor:"pointer",borderRadius:"6px",background:checked?"rgba(220,38,38,0.08)":"transparent",minHeight:"36px"}}>
+                    <div style={{width:"18px",height:"18px",borderRadius:"4px",border:checked?"2px solid #DC2626":"2px solid rgba(255,255,255,0.15)",background:checked?"#DC2626":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px",color:"#fff",flexShrink:0}}>{checked?"✓":""}</div>
+                    <span style={{fontSize:"12px",fontWeight:600,color:"#f1f5f9",minWidth:"50px",flexShrink:0}}>{s.ticker}</span>
+                    <span style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.name}</span>
+                    {s.rankScore&&<span style={{fontSize:"10px",fontWeight:700,color:scColor,flexShrink:0}}>{s.rankScore.toFixed(1)}</span>}
                   </div>;
                 })}
               </div>;
@@ -797,8 +863,8 @@ function ReportModal(p) {
           </div>
         </div>
 
-        <button onClick={generate} disabled={selCount===0||generating} style={{width:"100%",padding:"11px",borderRadius:"8px",border:"none",cursor:generating?"wait":"pointer",background:selCount===0?"rgba(255,255,255,0.05)":"#DC2626",color:selCount===0?"rgba(255,255,255,0.3)":"#fff",fontWeight:700,fontSize:"13px",opacity:generating?0.6:1}}>
-          {generating?"Gerando PDF...":"Gerar PDF (" + selCount + " empresa" + (selCount!==1?"s":"") + ")"}
+        <button onClick={generate} disabled={selCount===0||generating} style={{width:"100%",padding:"13px",borderRadius:"8px",border:"none",cursor:generating?"wait":"pointer",background:selCount===0?"rgba(255,255,255,0.05)":"#DC2626",color:selCount===0?"rgba(255,255,255,0.3)":"#fff",fontWeight:700,fontSize:"13px",opacity:generating?0.6:1,minHeight:"44px"}}>
+          {generating?(genProgress||"Gerando..."):"Gerar PDF (" + selCount + " empresa" + (selCount!==1?"s":"") + ")"}
         </button>
       </div>
     </div>
@@ -3469,8 +3535,8 @@ export default function App() {
   // Pillar configs
   var pillarItems = {
     research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"macro",label:"Macro & Viés"}],
-    consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"},{id:"panorama",label:"Panorama de Resultados"}],
-    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"config",label:"Configurações"}]
+    consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
+    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}]
   };
   var pillarColors = {research:"#991b1b",consultoria:"#DC2626",clientes:"#ef4444"};
   var pillarLabels = {research:"Research",consultoria:"Consultoria",clientes:"Clientes"};
@@ -3480,15 +3546,15 @@ export default function App() {
       {notif&&<div style={{position:"fixed",top:"14px",right:"14px",zIndex:1000,padding:"10px 18px",borderRadius:"8px",background:notif.type==="err"?"#DC2626":"#16a34a",color:"#fff",fontWeight:600,fontSize:"12px",boxShadow:"0 6px 24px rgba(0,0,0,0.5)"}}>{notif.msg}</div>}
 
       {/* ═══ HEADER ═══ */}
-      <div style={{padding:"12px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)",background:"linear-gradient(180deg, rgba(220,38,38,0.04) 0%, transparent 100%)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer"}} onClick={function(e){e.stopPropagation();nav("research","teses");}}>
-            <div style={{width:"34px",height:"34px",borderRadius:"8px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(220,38,38,0.3)",flexShrink:0}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
-            <div><h1 style={{margin:0,fontSize:"18px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1></div>
+      <div style={{padding:"10px 16px",borderBottom:"1px solid rgba(255,255,255,0.06)",background:"linear-gradient(180deg, rgba(220,38,38,0.04) 0%, transparent 100%)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}} onClick={function(e){e.stopPropagation();nav("research","teses");}}>
+            <div style={{width:"32px",height:"32px",borderRadius:"8px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(220,38,38,0.3)",flexShrink:0}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+            <div><h1 style={{margin:0,fontSize:"16px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1></div>
           </div>
 
           {/* Navigation pillars */}
-          <div style={{display:"flex",gap:"4px"}}>
+          <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
             {["research","consultoria","clientes"].map(function(pKey){
               var isActive = pilar === pKey;
               var color = pillarColors[pKey];
@@ -3555,11 +3621,11 @@ export default function App() {
         {/* CONSULTORIA > REUNIÃO */}
         {pilar==="consultoria"&&page==="reuniao"&&<MeetingPrepModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
 
-        {/* CONSULTORIA > PANORAMA */}
-        {pilar==="consultoria"&&page==="panorama"&&<ReportModal data={data} onClose={function(){nav("consultoria","panorama");}} inline={true}/>}
-
         {/* CLIENTES > PERFIS */}
         {pilar==="clientes"&&page==="perfis"&&<ClientProfilesModal onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CLIENTES > PANORAMA */}
+        {pilar==="clientes"&&page==="panorama"&&<ReportModal data={data} onClose={function(){nav("clientes","panorama");}} inline={true}/>}
 
         {/* CLIENTES > CONFIG */}
         {pilar==="clientes"&&page==="config"&&(<div style={{padding:"24px"}}>
