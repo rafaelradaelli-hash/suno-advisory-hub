@@ -2615,12 +2615,33 @@ function ConsultiveReportModal(p) {
                   // Map asset to BIAS_CLASSES subclass
                   function mapToSubclass(ticker, subClass, classe, classHint) {
                     var sc=(subClass||"").toLowerCase(); var cl=(classe||"").toLowerCase(); var ch=(classHint||"").toLowerCase(); var tk=(ticker||"").toUpperCase();
-                    if(sc==="caixa"||cl==="caixa") return "Cash";
-                    if(sc.indexOf("indexado")>=0||sc.indexOf("juros")>=0) return "Pós-fixado";
-                    if(sc.indexOf("inflac")>=0||sc.indexOf("ipca")>=0) return "IPCA+";
-                    if(sc.indexOf("pre")>=0&&sc.indexOf("fix")>=0) return "Pré-fixado";
-                    if(sc.indexOf("fundo")>=0&&cl.indexOf("renda fixa")>=0) return "Pós-fixado";
-                    if(cl.indexOf("renda fixa")>=0) return "Pós-fixado"; // default RF
+                    var fullName = (ticker||"").toUpperCase(); // nome completo do ativo (ex: "LCA 91% CDI BANCO BTG")
+
+                    // ── RENDA FIXA: classificar por tipo de indexador ──
+                    if(sc==="caixa"||cl==="caixa"||fullName.indexOf("CAIXA")>=0) return "Cash";
+
+                    // Check if it's RF (by class or subclass)
+                    var isRF = cl.indexOf("renda fixa")>=0 || sc.indexOf("indexado")>=0 || sc.indexOf("juros")>=0 || sc.indexOf("fundo")>=0 && cl.indexOf("renda fixa")>=0;
+                    if (!isRF) {
+                      // Also check by ticker name patterns for RF products
+                      isRF = /^(LCA|LCI|CDB|CRA|CRI|LF |DEBENTURE|NTN|LTN|TESOURO)/i.test(fullName) || /CDI|SELIC|DI |IPCA|INFLAC|PRE.?FIX|PREFIXAD/i.test(fullName);
+                    }
+
+                    if (isRF) {
+                      // Pré-fixado: LTN, Pré-fixado, Tesouro Prefixado
+                      if (/PRE.?FIX|PREFIXAD|LTN|TESOURO PRE/i.test(fullName)) return "Pré-fixado";
+                      // Inflação: IPCA+, NTN-B, Tesouro IPCA, inflação
+                      if (/IPCA|INFLAC|NTN.?B|TESOURO IPCA/i.test(fullName)) return "IPCA+";
+                      // Pós-fixado: CDI, Selic, DI, LCA, LCI, CDB (sem IPCA/Pré)
+                      if (/CDI|SELIC|DI |% DI|BANCO|LCA |LCI |CDB /i.test(fullName)) return "Pós-fixado";
+                      // Sub-classe do Excel diz algo específico?
+                      if(sc.indexOf("inflac")>=0||sc.indexOf("ipca")>=0) return "IPCA+";
+                      if(sc.indexOf("pre")>=0&&sc.indexOf("fix")>=0) return "Pré-fixado";
+                      // Default RF = Pós-fixado
+                      return "Pós-fixado";
+                    }
+
+                    // ── RENDA VARIÁVEL ──
                     if(sc.indexOf("fii")>=0||sc.indexOf("imobili")>=0||ch.indexOf("fii")>=0) return "FIIs";
                     if(sc.indexOf("etf")>=0) {
                       if(/^(IVVB|NASD|HASH|EURP|XINA|ACWI)/i.test(tk)) return "Equities Offshore";
@@ -2782,33 +2803,68 @@ function ConsultiveReportModal(p) {
                       })}
                     </div>
 
-                    {/* ── SELL SECTION: assets in Excel position not selected for buy ── */}
+                    {/* ── SELL/RESGATE SECTION: structured by class like buys ── */}
                     {posAssets.length>0&&(function(){
                       var sellTotal = Object.keys(sellAssets).reduce(function(s,tk){return s+(sellAssets[tk].value||0);},0);
-                      var totalCash = (parseFloat(availableCash)||0) + sellTotal;
-                      // Show position assets that could be sold
-                      var posForSale = posAssets.filter(function(pa){
-                        return pa.totalValue > 0 && pa.ticker.length <= 10;
+                      var totalCash = (parseBRL(availableCash)||0) + sellTotal;
+
+                      // Organize posAssets by BIAS_CLASSES subclass
+                      var sellBySubclass = {};
+                      ALL_BIAS_ITEMS.forEach(function(item){ sellBySubclass[item] = []; });
+                      posAssets.filter(function(pa){return pa.totalValue > 0;}).forEach(function(pa){
+                        var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "");
+                        if(sellBySubclass[mapped]) sellBySubclass[mapped].push(pa);
+                        else { if(!sellBySubclass["Pós-fixado"]) sellBySubclass["Pós-fixado"]=[]; sellBySubclass["Pós-fixado"].push(pa); }
                       });
-                      if(posForSale.length===0) return null;
+
+                      var hasAnySellable = posAssets.some(function(pa){return pa.totalValue > 0;});
+                      if(!hasAnySellable) return null;
+
                       return <div style={{marginBottom:"12px"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-                          <span style={{fontSize:"10px",fontWeight:700,color:"#f87171",textTransform:"uppercase",letterSpacing:"1px"}}>Vendas</span>
+                          <span style={{fontSize:"10px",fontWeight:700,color:"#f87171",textTransform:"uppercase",letterSpacing:"1px"}}>Vendas / Resgates</span>
                           <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>
                             {sellTotal>0&&<span style={{color:"#f87171",fontWeight:600}}>Vendas: R$ {sellTotal.toLocaleString("pt-BR")} · </span>}
                             <span style={{color:"#4ade80",fontWeight:600}}>Caixa total: R$ {totalCash.toLocaleString("pt-BR")}</span>
                           </div>
                         </div>
-                        <div style={{maxHeight:"180px",overflow:"auto",border:"1px solid rgba(248,113,113,0.1)",borderRadius:"8px"}}>
-                          {posForSale.map(function(pa){
-                            var isSelling = !!sellAssets[pa.ticker];
-                            var sellVal = isSelling ? sellAssets[pa.ticker].value : 0;
-                            return <div key={pa.ticker} style={{padding:"5px 10px",borderBottom:"1px solid rgba(255,255,255,0.02)",background:isSelling?"rgba(248,113,113,0.04)":"transparent",display:"flex",alignItems:"center",gap:"6px"}}>
-                              <input type="checkbox" checked={isSelling} onChange={function(){setSellAssets(function(prev){var n=Object.assign({},prev);if(n[pa.ticker])delete n[pa.ticker];else n[pa.ticker]={value:Math.round(pa.totalValue),total:true};return n;});}} style={{accentColor:"#f87171",flexShrink:0}}/>
-                              <span style={{fontWeight:700,fontSize:"11px",color:isSelling?"#f87171":"#f1f5f9",width:"52px",flexShrink:0}}>{pa.ticker}</span>
-                              <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pa.name||pa.subClass||""}</span>
-                              <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flexShrink:0}}>R$ {(pa.totalValue||0).toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>
-                              {isSelling&&<input type="number" value={sellVal||""} onChange={function(e){setSellAssets(function(prev){var n=Object.assign({},prev);n[pa.ticker]=Object.assign({},n[pa.ticker],{value:parseInt(e.target.value)||0,total:false});return n;});}} style={{width:"80px",background:"rgba(248,113,113,0.05)",border:"1px solid rgba(248,113,113,0.2)",borderRadius:"4px",color:"#f87171",fontSize:"10px",textAlign:"right",padding:"3px 6px",outline:"none",fontWeight:700}} placeholder="Valor"/>}
+                        <div style={{maxHeight:"280px",overflow:"auto",border:"1px solid rgba(248,113,113,0.1)",borderRadius:"8px"}}>
+                          {BIAS_CLASSES.map(function(group){
+                            var groupAssets = group.items.reduce(function(s,item){return s.concat(sellBySubclass[item]||[]);}, []);
+                            if(groupAssets.length===0) return null;
+                            var groupVal = groupAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+                            var groupSellVal = groupAssets.reduce(function(s,a){return s+(sellAssets[a.ticker]?sellAssets[a.ticker].value:0);},0);
+
+                            return <div key={group.group}>
+                              <div style={{padding:"6px 10px",background:"rgba(248,113,113,0.06)",borderBottom:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                <span style={{fontSize:"10px",fontWeight:800,color:"#f87171",textTransform:"uppercase",letterSpacing:"0.5px"}}>{group.group}</span>
+                                <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>
+                                  R$ {groupVal.toLocaleString("pt-BR",{maximumFractionDigits:0})}
+                                  {groupSellVal>0&&<span style={{color:"#f87171",marginLeft:"6px"}}>(-R$ {groupSellVal.toLocaleString("pt-BR")})</span>}
+                                </div>
+                              </div>
+                              {group.items.map(function(item){
+                                var itemAssets = sellBySubclass[item] || [];
+                                if(itemAssets.length===0) return null;
+                                var itemVal = itemAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+                                return <div key={item}>
+                                  <div style={{padding:"4px 10px 4px 20px",background:"rgba(255,255,255,0.01)",borderBottom:"1px solid rgba(255,255,255,0.02)",display:"flex",justifyContent:"space-between"}}>
+                                    <span style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.4)"}}>{item}</span>
+                                    <span style={{fontSize:"8px",color:"rgba(255,255,255,0.2)"}}>R$ {itemVal.toLocaleString("pt-BR",{maximumFractionDigits:0})} · {itemAssets.length} ativos</span>
+                                  </div>
+                                  {itemAssets.map(function(pa){
+                                    var isSelling = !!sellAssets[pa.ticker];
+                                    var sellVal = isSelling ? sellAssets[pa.ticker].value : 0;
+                                    return <div key={pa.ticker} style={{padding:"4px 10px 4px 32px",borderBottom:"1px solid rgba(255,255,255,0.02)",background:isSelling?"rgba(248,113,113,0.04)":"transparent",display:"flex",alignItems:"center",gap:"6px"}}>
+                                      <input type="checkbox" checked={isSelling} onChange={function(){setSellAssets(function(prev){var n=Object.assign({},prev);if(n[pa.ticker])delete n[pa.ticker];else n[pa.ticker]={value:Math.round(pa.totalValue),total:true};return n;});}} style={{accentColor:"#f87171",flexShrink:0}}/>
+                                      <span style={{fontWeight:700,fontSize:"10px",color:isSelling?"#f87171":"#f1f5f9",width:"52px",flexShrink:0}}>{pa.ticker.length>15?pa.ticker.slice(0,15)+"…":pa.ticker}</span>
+                                      <span style={{fontSize:"8px",color:"rgba(255,255,255,0.2)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pa.name||""}</span>
+                                      <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flexShrink:0}}>R$ {(pa.totalValue||0).toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>
+                                      {isSelling&&<input type="text" value={sellVal?"R$ "+formatBRL(sellVal):""} onChange={function(e){var v=parseBRL(e.target.value);setSellAssets(function(prev){var n=Object.assign({},prev);n[pa.ticker]=Object.assign({},n[pa.ticker],{value:v,total:false});return n;});}} style={{width:"90px",background:"rgba(248,113,113,0.05)",border:"1px solid rgba(248,113,113,0.2)",borderRadius:"4px",color:"#f87171",fontSize:"10px",textAlign:"right",padding:"3px 6px",outline:"none",fontWeight:700}} placeholder="R$ valor"/>}
+                                    </div>;
+                                  })}
+                                </div>;
+                              })}
                             </div>;
                           })}
                         </div>
