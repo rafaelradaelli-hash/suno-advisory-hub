@@ -172,6 +172,33 @@ function RankBadge(p) {
   );
 }
 
+var TONE_OPTIONS = [
+  {key:"simples",label:"Simples",desc:"Leigo"},
+  {key:"intermediario",label:"Intermediário",desc:"Noções básicas"},
+  {key:"profissional",label:"Profissional",desc:"Técnico"}
+];
+var TONE_MAP = {
+  "simples":"Use linguagem BEM SIMPLES, como se falasse com alguem que nunca investiu. Evite TODOS os termos tecnicos. Explique como se fosse para um amigo leigo. Frases curtas.",
+  "intermediario":"Use linguagem acessivel com alguns termos do mercado (explicados brevemente). O cliente tem nocoes basicas de investimentos.",
+  "profissional":"Use linguagem tecnica do mercado financeiro. O cliente e experiente e entende P/L, yield, duration, beta, Sharpe, fluxo de caixa descontado."
+};
+var TONE_MAP_SHORT = {"simples":"linguagem simples para leigos","intermediario":"linguagem acessivel com termos basicos","profissional":"linguagem tecnica profissional"};
+function getToneInstruction(tone, short) { return short ? (TONE_MAP_SHORT[tone]||TONE_MAP_SHORT["simples"]) : (TONE_MAP[tone]||TONE_MAP["simples"]); }
+
+function ToneSelector(p) {
+  var val = p.value || "simples";
+  var color = p.color || "#DC2626";
+  return (
+    <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+      <label style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",whiteSpace:"nowrap"}}>Tom:</label>
+      {TONE_OPTIONS.map(function(t){
+        var active = val === t.key;
+        return <button key={t.key} onClick={function(){p.onChange(t.key);}} style={{padding:"4px 10px",borderRadius:"14px",border:active?"1px solid "+color:"1px solid rgba(255,255,255,0.08)",background:active?(color+"1F"):"transparent",color:active?color:"rgba(255,255,255,0.35)",fontSize:"9px",fontWeight:active?700:500,cursor:"pointer"}} title={t.desc}>{t.label}</button>;
+      })}
+    </div>
+  );
+}
+
 function StockCard(p) {
   var s = p.stock;
   var [open,setOpen] = useState(false);
@@ -349,6 +376,7 @@ function AddPanel(p) {
   var [mT,setMT]=useState("");var [mN,setMN]=useState("");var [mQ,setMQ]=useState("");var [mTh,setMTh]=useState("");
   var [mTP,setMTP]=useState("");var [mTC,setMTC]=useState("");var [mRP,setMRP]=useState("");var [mRC,setMRC]=useState("");
   var [mR,setMR]=useState("");var [mSV,setMSV]=useState("");var [mSe,setMSe]=useState("neutral");var [mH,setMH]=useState(false);
+  var [writingTone,setWritingTone]=useState("profissional");
 
   // Preview state
   var [preview, setPreview] = useState(null); // { newData, oldData }
@@ -401,6 +429,7 @@ function AddPanel(p) {
     }
 
     var sys = 'Voce e um analista financeiro brasileiro especializado. Sua tarefa e analisar o NOVO TEXTO fornecido sobre uma empresa e gerar uma ficha CONSOLIDADA e ATUALIZADA.'
+      + '\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false)
       + (existingStock ? ' Voce recebera tambem os DADOS ATUAIS da empresa na base. Voce deve CONSOLIDAR as informacoes: atualizar o que mudou, remover pontos que ficaram obsoletos ou contraditorios com dados mais recentes, manter o que continua relevante, e adicionar novos pontos do texto.' : ' Como esta empresa ainda nao tem dados na base, extraia todas as informacoes relevantes do texto.')
       + ' REGRAS IMPORTANTES:'
       + ' 1) thesisPros e thesisCons sao pontos ESTRUTURAIS e PERMANENTES da tese de investimento (modelo de negocio, vantagens competitivas, riscos estruturais). Maximo 5-7 pontos cada. NAO inclua dados numericos trimestrais aqui.'
@@ -490,6 +519,8 @@ function AddPanel(p) {
             <div style={{fontSize:"10px",color:"rgba(251,191,36,0.6)",marginTop:"4px"}}>A IA vai consolidar os dados novos com a ficha existente de {selTicker}</div>
           )}
         </div>
+
+        <div style={{marginBottom:"8px"}}><ToneSelector value={writingTone} onChange={setWritingTone}/></div>
 
         <textarea value={aiText.indexOf("__PDF__")===0?"[PDF: "+fn+"]":aiText} onChange={function(e){if(aiText.indexOf("__PDF__")!==0)setAiText(e.target.value);setAiErr("");setPreview(null);}} placeholder="Cole o texto da análise aqui..." style={{width:"100%",minHeight:"140px",background:"rgba(255,255,255,0.02)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"8px",padding:"10px",color:"#e2e8f0",fontSize:"12px",resize:"vertical",fontFamily:"monospace",lineHeight:1.6,outline:"none",boxSizing:"border-box"}}/>
         {aiErr&&<div style={{color:"#f87171",fontSize:"11px",marginTop:"6px",padding:"8px 10px",background:"rgba(220,38,38,0.08)",borderRadius:"6px"}}>{aiErr}</div>}
@@ -981,13 +1012,22 @@ function ClientProfilesModal(p) {
             {profiles.length === 0 && <div style={{textAlign:"center",padding:"30px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Nenhum perfil cadastrado ainda.</div>}
             {profiles.map(function(pr){
               var riskColors = {Conservador:"#60a5fa",Moderado:"#4ade80",Arrojado:"#fbbf24",Agressivo:"#f87171"};
+              var hasJB = !!(pr.jbData);
+              var hasPos = !!(pr.posAssets && pr.posAssets.length > 0);
+              var posTotal = hasPos ? pr.posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0) : 0;
+              var posCount = hasPos ? pr.posAssets.filter(function(a){return a.totalValue>0;}).length : 0;
               return <div key={pr.id} style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontSize:"13px",fontWeight:700,color:"#f1f5f9"}}>{pr.name || "Sem nome"}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+                    <span style={{fontSize:"13px",fontWeight:700,color:"#f1f5f9"}}>{pr.name || "Sem nome"}</span>
+                    {hasJB && <span style={{fontSize:"7px",padding:"2px 5px",borderRadius:"6px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",fontWeight:700,letterSpacing:"0.5px"}}>JB</span>}
+                    {hasPos && <span style={{fontSize:"7px",padding:"2px 5px",borderRadius:"6px",background:"rgba(74,222,128,0.1)",color:"#4ade80",fontWeight:700,letterSpacing:"0.5px"}}>{posCount} ativos</span>}
+                  </div>
                   <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"2px"}}>
                     {pr.age && pr.age + " anos"}{pr.profession && " · " + pr.profession}
                     {pr.riskProfile && <span style={{marginLeft:"6px",padding:"1px 6px",borderRadius:"8px",background:"rgba(255,255,255,0.04)",color:riskColors[pr.riskProfile]||"#888",fontSize:"9px",fontWeight:600}}>{pr.riskProfile}</span>}
-                    {pr.totalWealth && <span style={{marginLeft:"6px",color:"rgba(255,255,255,0.25)"}}>R$ {parseFloat(pr.totalWealth).toLocaleString("pt-BR")}</span>}
+                    {hasPos && posTotal > 0 && <span style={{marginLeft:"6px",color:"rgba(255,255,255,0.25)"}}>R$ {posTotal.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
+                    {!hasPos && pr.totalWealth && <span style={{marginLeft:"6px",color:"rgba(255,255,255,0.25)"}}>R$ {parseFloat(pr.totalWealth).toLocaleString("pt-BR")}</span>}
                   </div>
                 </div>
                 <div style={{display:"flex",gap:"4px"}}>
@@ -1665,6 +1705,7 @@ function MeetingPrepModal(p) {
   var [wantTalkPoints, setWantTalkPoints] = useState(true);
   var [wantPDF, setWantPDF] = useState(false);
   var [selectedEmpresas, setSelectedEmpresas] = useState({});
+  var [writingTone, setWritingTone] = useState("simples");
 
   // Results
   var [generating, setGenerating] = useState(false);
@@ -1699,64 +1740,88 @@ function MeetingPrepModal(p) {
     setGenerating(true); setError(""); setGenProgress("Preparando...");
     var res = {macroShort:null, macroDetail:null, empresas:{}, talkPoints:null};
 
+    // Helper to extract text from API response content blocks
+    function extractText(content) {
+      var txt = "";
+      for (var i = 0; i < (content||[]).length; i++) {
+        if (content[i].type === "text" && content[i].text) txt += content[i].text;
+      }
+      return txt;
+    }
+    // Helper to parse JSON from raw text
+    function parseJSON(raw) {
+      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
+      if (si < 0 || ei <= si) { si = raw.indexOf("["); ei = raw.lastIndexOf("]"); }
+      if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
+      raw = raw.replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+      return JSON.parse(raw);
+    }
+
     try {
       // Build context
       var md = loadMacroData();
-      var macroText = (md.macroReports || []).slice(0,5).map(function(r){return "--- " + (r.title||"") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,3000);}).join("\n\n");
+      var macroText = (md.macroReports || []).slice(0,5).map(function(r){return "--- " + (r.title||"") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,2500);}).join("\n\n");
       var profileCtx = "Cliente: " + (selectedProfile.name||"") + ", " + (selectedProfile.age||"") + " anos, " + (selectedProfile.riskProfile||"") + ", horizonte " + (selectedProfile.horizon||"") + " anos. Objetivos: " + (selectedProfile.longTermGoals||"");
       var posCtx = "";
       if (selectedProfile.posAssets) {
         var posTotal = selectedProfile.posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
-        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicao: " + selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
+        var topAssets = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,20);
+        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicao (top " + topAssets.length + "): " + topAssets.map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
       }
 
       // ── MACRO (short + detail in one call) ──
       if (wantMacroShort || wantMacroDetail) {
         setGenProgress("Gerando cenário macro...");
-        var macroSys = 'Voce e um consultor preparando material para reuniao com cliente. Use os relatorios macro da Suno como fonte PRINCIPAL. Complemente com informacoes recentes via web search apenas se necessario. Tom neutro e profissional.';
-        var macroPrompt = "RELATORIOS MACRO SUNO:\n" + macroText.slice(0,12000) + "\n\nGere JSON: {";
-        if (wantMacroShort) macroPrompt += '"macroShort":"3-4 bullets curtos dos pontos mais relevantes do cenario macro atual (Selic, inflacao, cambio, bolsa). Maximo 4 linhas."';
-        if (wantMacroShort && wantMacroDetail) macroPrompt += ",";
-        if (wantMacroDetail) macroPrompt += '"macroDetail":"3 paragrafos detalhados sobre o cenario macro: economia brasileira, cenario global, perspectivas. Baseado nos relatorios Suno."';
-        macroPrompt += "} JSON puro.";
+        try {
+          var macroSys = 'Voce e um consultor preparando material para reuniao com cliente. Use os relatorios macro da Suno como fonte PRINCIPAL. Complemente com informacoes recentes via web search apenas se necessario.\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false);
+          var macroPrompt = "RELATORIOS MACRO SUNO:\n" + macroText.slice(0,10000) + "\n\nGere JSON: {";
+          if (wantMacroShort) macroPrompt += '"macroShort":"3-4 bullets curtos dos pontos mais relevantes do cenario macro atual (Selic, inflacao, cambio, bolsa). Maximo 4 linhas."';
+          if (wantMacroShort && wantMacroDetail) macroPrompt += ",";
+          if (wantMacroDetail) macroPrompt += '"macroDetail":"3 paragrafos detalhados sobre o cenario macro: economia brasileira, cenario global, perspectivas. Baseado nos relatorios Suno."';
+          macroPrompt += "} JSON puro sem markdown.";
 
-        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:macroSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:macroPrompt}]})});
-        if (resp.ok) { try {
-          var d = await resp.json(); var raw = "";
-          for (var i=0;i<d.content.length;i++){if(d.content[i].text)raw+=d.content[i].text;}
-          raw=raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-          var si=raw.indexOf("{");var ei=raw.lastIndexOf("}");
-          if(si>=0&&ei>si){var parsed=JSON.parse(raw.slice(si,ei+1));res.macroShort=cleanCitations(parsed.macroShort)||null;res.macroDetail=cleanCitations(parsed.macroDetail)||null;} } catch(macErr){console.error('Macro parse error:',macErr);}
-        }
+          var macroResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:macroSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:macroPrompt}]})});
+          if (macroResp.ok) {
+            var macroD = await macroResp.json();
+            var macroRaw = extractText(macroD.content);
+            if (macroRaw) {
+              var macroParsed = parseJSON(macroRaw);
+              res.macroShort = cleanCitations(macroParsed.macroShort) || null;
+              res.macroDetail = cleanCitations(macroParsed.macroDetail) || null;
+            }
+          }
+        } catch(macErr) { console.error('Macro error:', macErr); }
       }
 
       // ── EMPRESAS ──
       if (wantEmpresas) {
         var empTickers = Object.keys(selectedEmpresas);
         if (empTickers.length > 0) {
-          var batchSize = 6;
-          for (var b=0; b<empTickers.length; b+=batchSize) {
-            var batch = empTickers.slice(b, b+batchSize);
-            setGenProgress("Analisando " + batch.join(", ") + "...");
+          var empBatchSize = 6;
+          for (var eb = 0; eb < empTickers.length; eb += empBatchSize) {
+            var empBatch = empTickers.slice(eb, eb + empBatchSize);
+            setGenProgress("Analisando " + empBatch.join(", ") + "...");
             
-            var empCtx = batch.map(function(tk) {
+            var empCtx = empBatch.map(function(tk) {
               var app = allAppStocks.find(function(s){return s.ticker===tk;});
               var cart = null;
               (carteirasData.carteiras||[]).forEach(function(ca){(carteirasData.ativos[ca.id]||[]).forEach(function(a){if(a.ticker===tk)cart=a;});});
               return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart ? {rank:cart.rank, precoTeto:cart.precoTeto, vies:cart.vies} : null};
             });
 
-            var empSys = 'Para cada empresa, gere um resumo para briefing de reuniao usando os dados fornecidos (resultado trimestral, visao Suno, ranking, preco-teto). Gere JSON puro: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao dos analistas, situacao atual. Neutro e factual. Sem tags HTML."}]';
+            var empSys = 'Para cada empresa, gere um resumo para briefing de reuniao usando os dados fornecidos (resultado trimestral, visao Suno, ranking, preco-teto).\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false) + '\n\nGere JSON puro: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao dos analistas, situacao atual. Neutro e factual. Sem tags HTML."}]';
             try {
               var empResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:empSys,messages:[{role:"user",content:"EMPRESAS:\n"+JSON.stringify(empCtx)}]})});
               if (empResp.ok) {
-                var ed = await empResp.json(); var eraw = "";
-                for(var ei2=0;ei2<ed.content.length;ei2++){if(ed.content[ei2].text)eraw+=ed.content[ei2].text;}
-                eraw=eraw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-                var esi=eraw.indexOf("[");var eei=eraw.lastIndexOf("]");
-                if(esi>=0&&eei>esi){var eParsed=JSON.parse(eraw.slice(esi,eei+1));eParsed.forEach(function(e){e.summary=cleanCitations(e.summary);res.empresas[e.ticker]=e;});}
+                var empD = await empResp.json();
+                var empRaw = extractText(empD.content);
+                if (empRaw) {
+                  var empParsed = parseJSON(empRaw);
+                  if (Array.isArray(empParsed)) { empParsed.forEach(function(e){e.summary=cleanCitations(e.summary);res.empresas[e.ticker]=e;}); }
+                }
               }
-            } catch(empErr) { console.error("Empresas error:", empErr); }
+            } catch(empErr) { console.error("Empresas batch error:", empErr); }
           }
         }
       }
@@ -1764,24 +1829,33 @@ function MeetingPrepModal(p) {
       // ── TALKING POINTS ──
       if (wantTalkPoints) {
         setGenProgress("Gerando talking points...");
-        var tpSys = 'Gere TALKING POINTS para uma reuniao de consultoria de investimentos. Personalize para ESTE cliente. Use dados da Suno. Tom profissional e neutro.';
-        var tpMsg = profileCtx + "\n" + posCtx + "\nEmpresas analisadas: " + Object.keys(res.empresas).join(", ") + "\nFoco da reuniao: " + (meetingFocus || "acompanhamento trimestral");
-        if (res.macroShort) tpMsg += "\nMacro: " + res.macroShort;
-        tpMsg += '\n\nGere JSON: {"talkPoints":"5-7 bullets de pontos de conversa personalizados para este cliente. Inclua: situacao da carteira vs plano, oportunidades, riscos, proximos passos. Cada bullet em uma linha separada com - no inicio."} JSON puro.';
-
         try {
-          var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
+          var tpSys = 'Gere TALKING POINTS para uma reuniao de consultoria de investimentos. Personalize para ESTE cliente. Use dados da Suno.\n\nTOM DE ESCRITA: ' + getToneInstruction(writingTone, false);
+          var tpMsg = profileCtx + "\n" + posCtx + "\nEmpresas analisadas: " + Object.keys(res.empresas).join(", ") + "\nFoco da reuniao: " + (meetingFocus || "acompanhamento trimestral");
+          if (res.macroShort) tpMsg += "\nMacro: " + res.macroShort;
+          tpMsg += '\n\nGere JSON: {"talkPoints":"5-7 bullets de pontos de conversa personalizados para este cliente. Inclua: situacao da carteira vs plano, oportunidades, riscos, proximos passos. Cada bullet em uma linha separada com - no inicio."} JSON puro.';
+
+          var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
           if (tpResp.ok) {
-            var td = await tpResp.json(); var traw = "";
-            for(var ti=0;ti<td.content.length;ti++){if(td.content[ti].text)traw+=td.content[ti].text;}
-            traw=traw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-            var tsi=traw.indexOf("{");var tei=traw.lastIndexOf("}");
-            if(tsi>=0&&tei>tsi){var tParsed=JSON.parse(traw.slice(tsi,tei+1));res.talkPoints=cleanCitations(tParsed.talkPoints)||null;}
+            var tpD = await tpResp.json();
+            var tpRaw = extractText(tpD.content);
+            if (tpRaw) {
+              var tpParsed = parseJSON(tpRaw);
+              res.talkPoints = cleanCitations(tpParsed.talkPoints) || null;
+            }
           }
         } catch(tpErr) { console.error("TalkPoints error:", tpErr); }
       }
 
       setResults(res);
+
+      // Show warning if some sections failed
+      var warnings = [];
+      if ((wantMacroShort && !res.macroShort) || (wantMacroDetail && !res.macroDetail)) warnings.push("macro");
+      if (wantEmpresas && Object.keys(selectedEmpresas).length > 0 && Object.keys(res.empresas).length === 0) warnings.push("empresas");
+      if (wantTalkPoints && !res.talkPoints) warnings.push("talking points");
+      if (warnings.length > 0) setError("Aviso: falha parcial em " + warnings.join(", ") + ". Você pode clicar 'Refazer' para tentar novamente.");
+
     } catch(err) { console.error(err); setError("Erro: " + err.message); }
     setGenerating(false); setGenProgress("");
   }
@@ -1903,10 +1977,12 @@ function MeetingPrepModal(p) {
               </div>
             </div>)}
 
-            {/* Generate button */}
-            {!results&&(<button onClick={generateAll} disabled={generating} style={Object.assign({},btnBase,{width:"100%",background:generating?"rgba(139,92,246,0.2)":"#7c3aed",color:"#fff",padding:"12px",fontSize:"13px"})}>
+            {/* Tone selector + Generate button */}
+            {!results&&(<div>
+              <div style={{marginBottom:"10px"}}><ToneSelector value={writingTone} onChange={setWritingTone} color="#7c3aed"/></div>
+              <button onClick={generateAll} disabled={generating} style={Object.assign({},btnBase,{width:"100%",background:generating?"rgba(139,92,246,0.2)":"#7c3aed",color:"#fff",padding:"12px",fontSize:"13px"})}>
               {generating?genProgress:"Gerar Briefing"}
-            </button>)}
+            </button></div>)}
 
             {/* Results */}
             {results&&(<div>
@@ -2509,9 +2585,8 @@ function ConsultiveReportModal(p) {
         return ctx;
       });
 
-      // toneMap defined inline
-      var toneMap = {"simples":"Use linguagem BEM SIMPLES, como se falasse com alguem que nunca investiu. Evite TODOS os termos tecnicos. Explique como se fosse para um amigo leigo. Frases curtas.","intermediario":"Use linguagem acessivel com alguns termos do mercado (explicados brevemente). O cliente tem nocoes basicas.","profissional":"Use linguagem tecnica do mercado financeiro. O cliente e experiente e entende P/L, yield, duration, beta, Sharpe."};
-      var toneInst = toneMap[writingTone] || toneMap["simples"];
+      // Use shared tone instruction
+      var toneInst = getToneInstruction(writingTone, false);
 
       var sys = 'Voce e um consultor de investimentos gerando um RELATORIO DE RECOMENDACOES MENSAL.'
         + '\n\nTOM DE ESCRITA: ' + toneInst
@@ -2562,7 +2637,6 @@ function ConsultiveReportModal(p) {
   async function readjustTexts() {
     setGenerating(true); setError(""); setGenProgress("Reajustando textos...");
     try {
-      var toneMap = {"simples":"linguagem simples para leigos","intermediario":"linguagem acessivel com termos basicos","profissional":"linguagem tecnica profissional"};
       var items = Object.keys(allocations).map(function(tk) {
         var a = allocations[tk];
         var cr = (crossrefData||[]).find(function(c){return c.ticker===tk;});
@@ -2570,7 +2644,7 @@ function ConsultiveReportModal(p) {
       });
       var totalAlloc = items.reduce(function(s,a){return s+(a.value||0);},0);
 
-      var sys = 'O consultor ajustou os valores de aporte. Reescreva os textos mantendo os NOVOS VALORES. TOM: ' + (toneMap[writingTone]||toneMap['simples'])
+      var sys = 'O consultor ajustou os valores de aporte. Reescreva os textos mantendo os NOVOS VALORES. TOM: ' + getToneInstruction(writingTone, true)
         + ' NAO mencione rankings internos, "vies Comprar/Aguardar", "lider da carteira X". FOQUE na tese do ativo, resultados recentes, desconto vs preco justo, e como se encaixa no plano.'
         + ' JSON: {"strategy":"NOVO TEXTO 3-5 paragrafos em linguagem simples","allocations":[{"ticker":"","rationale":"1 PARAGRAFO atualizado com novo valor, linguagem clara","verdict":"APORTAR|MANTER"}]} JSON puro.';
       var userMsg = "Estrategia anterior:\n" + strategyText.slice(0,2000) + "\n\nNOVOS VALORES (total R$ " + totalAlloc.toLocaleString("pt-BR") + "):\n" + JSON.stringify(items) + "\n\n" + buildProfileContext() + "\n" + buildJourneyContext();
@@ -3218,14 +3292,7 @@ function ConsultiveReportModal(p) {
                     })()}
 
                     {/* Writing tone selector + generate button */}
-                    <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}}>
-                      <label style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",whiteSpace:"nowrap"}}>Tom do texto:</label>
-                      {["simples","intermediario","profissional"].map(function(t){
-                        var labels={"simples":"Simples","intermediario":"Intermediário","profissional":"Profissional"};
-                        var active=writingTone===t;
-                        return <button key={t} onClick={function(){setWritingTone(t);}} style={{padding:"4px 10px",borderRadius:"14px",border:active?"1px solid #DC2626":"1px solid rgba(255,255,255,0.08)",background:active?"rgba(220,38,38,0.12)":"transparent",color:active?"#DC2626":"rgba(255,255,255,0.35)",fontSize:"9px",fontWeight:active?700:500,cursor:"pointer"}}>{labels[t]}</button>;
-                      })}
-                    </div>
+                    <div style={{marginBottom:"8px"}}><ToneSelector value={writingTone} onChange={setWritingTone}/></div>
 
                     <div style={{display:"flex",gap:"8px"}}>
                       <button onClick={function(){setRecStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
