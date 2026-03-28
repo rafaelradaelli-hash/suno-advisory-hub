@@ -1021,6 +1021,18 @@ var BIAS_CLASSES = [
 var ALL_BIAS_ITEMS = [];
 BIAS_CLASSES.forEach(function(g){g.items.forEach(function(it){ALL_BIAS_ITEMS.push(it);});});
 
+// Currency formatting helpers
+function formatBRL(val) {
+  if (!val && val !== 0) return "";
+  var num = typeof val === "string" ? parseInt(val.replace(/\D/g, "")) || 0 : Math.round(val);
+  if (num === 0) return "";
+  return num.toLocaleString("pt-BR");
+}
+function parseBRL(str) {
+  return parseInt(String(str).replace(/\D/g, "")) || 0;
+}
+
+
 function loadMacroData() {
   try { var s = localStorage.getItem("tt-macro"); if (s) return JSON.parse(s); } catch(e) {}
   return { macroReports:[], biasViews:{}, allocationTable:{} };
@@ -1663,9 +1675,13 @@ function ConsultiveReportModal(p) {
   var [availableCash, setAvailableCash] = useState("");
   var [allocations, setAllocations] = useState({}); // {ticker: {value: R$, text: "", verdict: ""}}
   var [previewApproved, setPreviewApproved] = useState(false);
+  var [writingTone, setWritingTone] = useState("simples"); // simples, intermediario, profissional
   var posFileRef = useRef(null);
   var [crossrefData, setCrossrefData] = useState(null);
   var [selectedAssets, setSelectedAssets] = useState({});
+  var [sellAssets, setSellAssets] = useState({}); // {ticker: {value: R$, total: bool}}
+  var [quotesLoading, setQuotesLoading] = useState(false);
+  var [quotesUpdated, setQuotesUpdated] = useState(null);
   var [generating, setGenerating] = useState(false);
   var [genProgress, setGenProgress] = useState("");
   var [analyses, setAnalyses] = useState({});
@@ -1993,7 +2009,67 @@ function ConsultiveReportModal(p) {
     setCrossrefData(result); setSelectedAssets({}); setAnalyses({}); setRecStep("select");
   }
 
-  // ── Context builders ──
+  // ── Fetch live quotes via AI + web search ──
+  async function fetchQuotes() {
+    if (!crossrefData || crossrefData.length === 0) return;
+    setQuotesLoading(true);
+    try {
+      // Get unique tickers that have a ceiling price (worth looking up)
+      var tickers = [];
+      crossrefData.forEach(function(c) {
+        if (c.ceilingPrice && tickers.indexOf(c.ticker) < 0) tickers.push(c.ticker);
+      });
+      if (tickers.length === 0) { setQuotesLoading(false); return; }
+
+      // Batch in groups of ~20
+      var batchSize = 20;
+      var allQuotes = {};
+      for (var b = 0; b < tickers.length; b += batchSize) {
+        var batch = tickers.slice(b, b + batchSize);
+
+        var resp = await fetch("/api/anthropic", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514", max_tokens: 2048,
+            tools: [{"type": "web_search_20250305", "name": "web_search"}],
+            messages: [{role: "user", content: "Busque a cotacao atual (preco de fechamento mais recente) destes ativos. Responda SOMENTE com JSON puro: {\"TICKER\": preco_numerico, ...}. Ativos: " + batch.join(", ")}]
+          })
+        });
+        if (!resp.ok) throw new Error("API " + resp.status);
+        var d = await resp.json();
+        var raw = "";
+        for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
+        raw = raw.trim().replace(/```json\s*/g, "").replace(/```\s*/g, "");
+        var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
+        if (si >= 0 && ei > si) {
+          raw = raw.slice(si, ei + 1);
+          try {
+            var parsed = JSON.parse(raw);
+            Object.keys(parsed).forEach(function(tk) { allQuotes[tk.toUpperCase()] = parseFloat(parsed[tk]) || 0; });
+          } catch(e) { console.warn("Quote parse error:", e); }
+        }
+      }
+
+      // Update crossrefData with live prices
+      if (Object.keys(allQuotes).length > 0) {
+        setCrossrefData(function(prev) {
+          return prev.map(function(c) {
+            var livePrice = allQuotes[c.ticker];
+            if (livePrice && livePrice > 0) {
+              var updated = Object.assign({}, c, { currentPrice: livePrice });
+              if (c.ceilingPrice) {
+                updated.deltaCeiling = Math.round((c.ceilingPrice / livePrice - 1) * 100);
+              }
+              return updated;
+            }
+            return c;
+          });
+        });
+        setQuotesUpdated(new Date().toLocaleTimeString("pt-BR", {hour:"2-digit", minute:"2-digit"}));
+      }
+    } catch(err) { console.error("Fetch quotes error:", err); }
+    setQuotesLoading(false);
+  }
   function buildProfileContext() {
     if (!editingProfile) return "";
     var pr = editingProfile;
@@ -2103,7 +2179,19 @@ function ConsultiveReportModal(p) {
       var journeyCtx = buildJourneyContext();
       var carteirasCtx = buildCarteirasContext();
       var macroCtx = buildMacroCtxShort();
-      var cash = parseFloat(availableCash) || 0;
+      var baseCash = parseFloat(availableCash) || 0;
+      var sellTotal = Object.keys(sellAssets).reduce(function(s,tk){return s+(sellAssets[tk].value||0);},0);
+      var cash = baseCash + sellTotal;
+
+      // Build sell context
+      var sellCtx = "";
+      if (sellTotal > 0) {
+        var sellItems = Object.keys(sellAssets).map(function(tk) {
+          var pa = posAssets.find(function(p){return p.ticker===tk;});
+          return { ticker: tk, sellValue: sellAssets[tk].value, currentValue: pa?(pa.totalValue||0):0, subClass: pa?(pa.subClass||""):"" };
+        });
+        sellCtx = "\nVENDAS PROPOSTAS (R$ " + sellTotal.toLocaleString("pt-BR") + " total):\n" + JSON.stringify(sellItems);
+      }
 
       var assetsCtx = selected.map(function(a) {
         var ctx = { ticker: a.ticker, name: a.name, class: a.class || a._classTag || "", jbPercent: a.jbPercent, posPercent: a.posPercent, posValue: a.posValue || 0, ceilingPrice: a.ceilingPrice, currentPrice: a.currentPrice, deltaCeiling: a.deltaCeiling, hasPosition: a.hasPosition };
@@ -2112,28 +2200,29 @@ function ConsultiveReportModal(p) {
         return ctx;
       });
 
-      var sys = 'Voce e um consultor de investimentos escrevendo para um cliente que NAO e profissional do mercado financeiro. Use linguagem SIMPLES, CLARA e ACESSIVEL. Evite jargoes tecnicos — quando precisar usar um termo tecnico, explique brevemente entre parenteses.'
-        + '\n\nVoce esta gerando um RELATORIO DE RECOMENDACOES MENSAL para este cliente.'
-        + ' Voce recebera: perfil do cliente, Journey Book (plano de investimento com metas), posicao atual real (do Excel), cenario economico, e ativos selecionados pelo consultor.'
-        + ' A POSICAO ATUAL vem do EXCEL — e a carteira real do cliente HOJE. O Journey Book e o PLANO com as metas que queremos atingir.'
-        + ' O cliente tem R$ ' + cash.toLocaleString("pt-BR") + ' disponiveis para investir este mes.'
-        + '\n\nREGRAS DE ESCRITA:'
-        + ' - NAO mencione rankings internos, classificacoes internas como "ativo #1 da carteira X" ou "lider da carteira Y" ou "vies Comprar/Aguardar".'
-        + ' - NAO use expressoes como "margem de seguranca", "upside", "downside", "valuation", "multiplos" sem explicar.'
-        + ' - FOQUE na tese do ativo (por que e um bom investimento), nos resultados recentes da empresa, na visao dos analistas, e no desconto atual do preco (quanto esta abaixo do preco considerado justo).'
-        + ' - Explique como cada aporte se encaixa no plano do cliente (Journey Book).'
-        + ' - Escreva como se estivesse conversando com o cliente em uma reuniao.'
-        + '\n\nGere um JSON com esta estrutura:'
-        + ' {"strategy":"TEXTO de 3-5 paragrafos: 1) Onde esta a carteira hoje vs o plano — quais classes de ativos precisam de mais investimento? Use os numeros reais do Excel. 2) Como esta o cenario economico e o que isso significa para a carteira. 3) Quais oportunidades enxergamos para este mes. 4) Como estamos propondo distribuir os R$ ' + cash.toLocaleString("pt-BR") + ' e por que. Linguagem SIMPLES e CLARA. Sem markdown.",'
-        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO (3-4 frases) em linguagem simples: o que a empresa faz, como estao seus resultados recentes, quanto o preco atual esta abaixo do preco justo, e por que faz sentido investir agora considerando o plano do cliente.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
-        + '\n\nREGRAS TECNICAS:'
-        + ' 1) Distribua os R$ ' + cash.toLocaleString("pt-BR") + ' de forma inteligente entre os ativos.'
-        + ' 2) Priorize: ativos com maior desconto vs preco justo, classes que precisam de mais investimento conforme o plano, empresas com bons resultados recentes.'
-        + ' 3) A soma dos valores deve ser EXATAMENTE R$ ' + cash.toLocaleString("pt-BR") + '.'
-        + ' 4) Valores inteiros (sem centavos).'
-        + ' JSON puro sem markdown.';
+      // toneMap defined inline
+      var toneMap = {"simples":"Use linguagem BEM SIMPLES, como se falasse com alguem que nunca investiu. Evite TODOS os termos tecnicos. Explique como se fosse para um amigo leigo. Frases curtas.","intermediario":"Use linguagem acessivel com alguns termos do mercado (explicados brevemente). O cliente tem nocoes basicas.","profissional":"Use linguagem tecnica do mercado financeiro. O cliente e experiente e entende P/L, yield, duration, beta, Sharpe."};
+      var toneInst = toneMap[writingTone] || toneMap["simples"];
 
-      var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa: R$ " + cash.toLocaleString("pt-BR") + "\nATIVOS SELECIONADOS:\n" + JSON.stringify(assetsCtx);
+      var sys = 'Voce e um consultor de investimentos gerando um RELATORIO DE RECOMENDACOES MENSAL.'
+        + '\n\nTOM DE ESCRITA: ' + toneInst
+        + '\n\nREGRAS DE ESCRITA OBRIGATORIAS:'
+        + ' - SEM SENSACIONALISMO. NAO use expressoes como "oportunidade unica", "momento excepcional", "nao pode perder", "excelente momento", "oportunidade rara". Seja NEUTRO e FACTUAL.'
+        + ' - NAO mencione rankings internos ("ativo #1 da carteira X", "lider da carteira Y", "top da carteira").'
+        + ' - NAO mencione classificacoes internas como "vies Comprar/Aguardar".'
+        + ' - FOQUE em: tese do ativo (o que a empresa faz e por que e relevante), resultados recentes, visao dos analistas, desconto atual vs preco justo, e como se encaixa no plano do cliente.'
+        + ' - Escreva de forma EQUILIBRADA — mencione tanto pontos positivos quanto riscos.'
+        + '\n\nVoce recebera: perfil do cliente, Journey Book (METAS), POSICAO ATUAL DO EXCEL (carteira real hoje com % por classe), cenario macro, e ativos selecionados.'
+        + ' A POSICAO ATUAL vem do EXCEL — e a carteira real. O Journey Book e o PLANO com as metas.'
+        + ' O cliente tem R$ ' + cash.toLocaleString("pt-BR") + ' disponiveis para investir' + (sellTotal > 0 ? ' (R$ ' + baseCash.toLocaleString("pt-BR") + ' em caixa + R$ ' + sellTotal.toLocaleString("pt-BR") + ' de vendas propostas).' : '.')
+        + '\n\nGere JSON:'
+        + ' {"strategy":"3-5 paragrafos: 1) Onde esta a carteira hoje (dados do Excel) vs o plano (JB) — use numeros reais. 2) Cenario economico atual. 3) Oportunidades identificadas. 4) Como distribuimos o caixa e por que. Tom neutro e factual.",'
+        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO neutro: o que a empresa faz, resultados recentes, quanto o preco esta abaixo do justo, como esse aporte ajuda a carteira a se aproximar do plano.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]'
+        + (sellTotal > 0 ? ',"sells":[{"ticker":"XXXX","value":VALOR_DA_VENDA,"rationale":"1 PARAGRAFO neutro explicando por que faz sentido reduzir ou encerrar posicao nesse ativo.","verdict":"VENDER|REDUZIR"}]' : '')
+        + '}'
+        + '\n\nREGRAS TECNICAS: Distribua R$ ' + cash.toLocaleString("pt-BR") + ' inteligentemente. Soma = EXATAMENTE esse valor. Valores inteiros. Priorize classes sub-alocadas e ativos com desconto. JSON puro.';
+
+      var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa total: R$ " + cash.toLocaleString("pt-BR") + sellCtx + "\nATIVOS SELECIONADOS PARA COMPRA:\n" + JSON.stringify(assetsCtx);
 
       var resp = await fetch("/api/anthropic", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 6000, system: sys, messages: [{role:"user", content: userMsg}] }) });
       if (!resp.ok) throw new Error("API " + resp.status);
@@ -2148,7 +2237,11 @@ function ConsultiveReportModal(p) {
       setStrategyText(parsed.strategy || "");
       var allocMap = {};
       (parsed.allocations || []).forEach(function(a) {
-        allocMap[a.ticker] = { value: a.value || 0, percent: a.percent || 0, rationale: a.rationale || "", verdict: a.verdict || "APORTAR" };
+        allocMap[a.ticker] = { value: a.value || 0, percent: a.percent || 0, rationale: a.rationale || "", verdict: a.verdict || "APORTAR", type: "buy" };
+      });
+      // Process sells
+      (parsed.sells || []).forEach(function(a) {
+        allocMap[a.ticker] = { value: -(a.value || 0), percent: 0, rationale: a.rationale || "", verdict: a.verdict || "VENDER", type: "sell" };
       });
       setAllocations(allocMap);
       setRecStep("preview");
@@ -2160,6 +2253,7 @@ function ConsultiveReportModal(p) {
   async function readjustTexts() {
     setGenerating(true); setError(""); setGenProgress("Reajustando textos...");
     try {
+      var toneMap = {"simples":"linguagem simples para leigos","intermediario":"linguagem acessivel com termos basicos","profissional":"linguagem tecnica profissional"};
       var items = Object.keys(allocations).map(function(tk) {
         var a = allocations[tk];
         var cr = (crossrefData||[]).find(function(c){return c.ticker===tk;});
@@ -2167,7 +2261,7 @@ function ConsultiveReportModal(p) {
       });
       var totalAlloc = items.reduce(function(s,a){return s+(a.value||0);},0);
 
-      var sys = 'O consultor ajustou os valores de aporte. Reescreva os textos mantendo os NOVOS VALORES. Use linguagem SIMPLES e CLARA, como se falasse com alguem que nao e do mercado financeiro.'
+      var sys = 'O consultor ajustou os valores de aporte. Reescreva os textos mantendo os NOVOS VALORES. TOM: ' + (toneMap[writingTone]||toneMap['simples'])
         + ' NAO mencione rankings internos, "vies Comprar/Aguardar", "lider da carteira X". FOQUE na tese do ativo, resultados recentes, desconto vs preco justo, e como se encaixa no plano.'
         + ' JSON: {"strategy":"NOVO TEXTO 3-5 paragrafos em linguagem simples","allocations":[{"ticker":"","rationale":"1 PARAGRAFO atualizado com novo valor, linguagem clara","verdict":"APORTAR|MANTER"}]} JSON puro.';
       var userMsg = "Estrategia anterior:\n" + strategyText.slice(0,2000) + "\n\nNOVOS VALORES (total R$ " + totalAlloc.toLocaleString("pt-BR") + "):\n" + JSON.stringify(items) + "\n\n" + buildProfileContext() + "\n" + buildJourneyContext();
@@ -2220,6 +2314,87 @@ function ConsultiveReportModal(p) {
     });
   }
 
+  // ── Operational PDF (table for daily banker) ──
+  function generateOperationalPDF() {
+    var doc = new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    var W=297;var H=210;var ML=15;var MR=15;var CW=W-ML-MR;
+    var clientName = editingProfile ? editingProfile.name : "";
+
+    // Header
+    doc.setFillColor(180,40,40);doc.rect(0,0,W,0.5,"F");
+    doc.setFontSize(8);doc.setFont("helvetica","bold");doc.setTextColor(140,140,140);
+    doc.text("SUNO ADVISORY HUB",ML,8);
+    doc.setFont("helvetica","normal");doc.text("ORDEM DE MOVIMENTAÇÃO",W-MR,8,{align:"right"});
+    doc.setDrawColor(215,215,215);doc.line(ML,11,W-MR,11);
+
+    // Client info
+    var y = 18;
+    doc.setFontSize(14);doc.setFont("helvetica","bold");doc.setTextColor(30,30,30);
+    doc.text("Movimentações — " + (clientName||"Cliente"),ML,y);y+=6;
+    doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(100,100,100);
+    doc.text("Período: " + (period||"Mensal") + "  |  Consultor: " + (consultorName||"") + "  |  Data: " + new Date().toLocaleDateString("pt-BR"),ML,y);y+=10;
+
+    // Table header
+    var cols = [{l:"TIPO",w:22},{l:"TICKER",w:28},{l:"ATIVO",w:70},{l:"CLASSE",w:35},{l:"QTD APROX.",w:25},{l:"PREÇO ATUAL",w:30},{l:"VALOR (R$)",w:32},{l:"CORRETORA",w:25}];
+    var totalW = cols.reduce(function(s,c){return s+c.w;},0);
+
+    doc.setFillColor(245,245,245);doc.rect(ML,y-1,totalW,7,"F");
+    doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(100,100,100);
+    var cx = ML;
+    cols.forEach(function(col){doc.text(col.l,cx+2,y+3);cx+=col.w;});
+    doc.setDrawColor(200,200,200);doc.line(ML,y+5,ML+totalW,y+5);y+=8;
+
+    // Sort: sells first, then buys
+    var items = Object.keys(allocations).map(function(tk){
+      var al=allocations[tk];
+      var cr=(crossrefData||[]).find(function(c){return c.ticker===tk;});
+      var pa=posAssets.find(function(p){return p.ticker===tk;});
+      return {ticker:tk, name:cr?cr.name:(pa?pa.name:""), class:cr?(cr._classTag||cr.class||""):(pa?(pa.subClass||pa.type||""):""), value:al.value||0, verdict:al.verdict||"", type:al.type||"buy", currentPrice:cr?cr.currentPrice:(pa?pa.currentPrice:0)};
+    });
+    items.sort(function(a,b){if(a.type!==b.type)return a.type==="sell"?-1:1;return Math.abs(b.value)-Math.abs(a.value);});
+
+    var totalBuy=0;var totalSell=0;
+    doc.setFontSize(8);doc.setFont("helvetica","normal");
+    items.forEach(function(item){
+      var absVal=Math.abs(item.value);
+      var qty=item.currentPrice>0?Math.floor(absVal/item.currentPrice):0;
+      var isSell=item.type==="sell";
+      if(isSell)totalSell+=absVal;else totalBuy+=absVal;
+
+      cx=ML;
+      doc.setTextColor(isSell?170:25,isSell?45:120,isSell?45:65);
+      doc.text(isSell?"VENDA":"COMPRA",cx+2,y);cx+=cols[0].w;
+      doc.setTextColor(30,30,30);doc.setFont("helvetica","bold");
+      doc.text(item.ticker,cx+2,y);cx+=cols[1].w;
+      doc.setFont("helvetica","normal");doc.setTextColor(80,80,80);
+      doc.text((item.name||"").slice(0,30),cx+2,y);cx+=cols[2].w;
+      doc.text((item.class||"").slice(0,18),cx+2,y);cx+=cols[3].w;
+      doc.text(qty>0?String(qty):"—",cx+2,y);cx+=cols[4].w;
+      doc.text(item.currentPrice>0?"R$ "+item.currentPrice.toFixed(2):"—",cx+2,y);cx+=cols[5].w;
+      doc.setFont("helvetica","bold");doc.setTextColor(isSell?170:25,isSell?45:120,isSell?45:65);
+      doc.text("R$ "+absVal.toLocaleString("pt-BR"),cx+2,y);cx+=cols[6].w;
+      doc.setFont("helvetica","normal");doc.setTextColor(140,140,140);
+      doc.text("",cx+2,y);
+      doc.setDrawColor(230,230,230);doc.line(ML,y+2,ML+totalW,y+2);
+      y+=6;
+    });
+
+    // Totals
+    y+=3;doc.setDrawColor(100,100,100);doc.line(ML,y-1,ML+totalW,y-1);
+    doc.setFontSize(9);doc.setFont("helvetica","bold");
+    if(totalSell>0){doc.setTextColor(170,45,45);doc.text("Total Vendas: R$ "+totalSell.toLocaleString("pt-BR"),ML+2,y+4);}
+    doc.setTextColor(25,120,65);doc.text("Total Compras: R$ "+totalBuy.toLocaleString("pt-BR"),ML+120,y+4);
+    doc.setTextColor(30,30,30);doc.text("Líquido: R$ "+(totalBuy-totalSell).toLocaleString("pt-BR"),ML+200,y+4);
+
+    // Footer
+    y+=14;doc.setFontSize(7);doc.setFont("helvetica","italic");doc.setTextColor(175,175,175);
+    doc.text("Documento operacional — uso interno. Quantidades aproximadas baseadas no preço de mercado no momento da geração.",ML,y);
+    doc.setFillColor(180,40,40);doc.rect(0,H-0.5,W,0.5,"F");
+
+    var fn="movimentacoes"+(clientName?"-"+clientName.replace(/\s+/g,"-").toLowerCase():"")+"-"+(period||"").replace(/\s/g,"")+".pdf";
+    doc.save(fn);
+  }
+
   // ── PDF ──
   async function generatePDF() {
     setPdfGenerating(true);
@@ -2253,6 +2428,13 @@ function ConsultiveReportModal(p) {
       y+=8;
       // INDIVIDUAL ANALYSES
       var reportAssets=(crossrefData||[]).filter(function(c){return allocations[c.ticker];});
+      // Add sell assets that might not be in crossrefData
+      Object.keys(allocations).forEach(function(tk){
+        if(allocations[tk].type==="sell" && !reportAssets.find(function(r){return r.ticker===tk;})){
+          var pa=posAssets.find(function(p){return p.ticker===tk;});
+          reportAssets.push({ticker:tk, name:pa?pa.name:"", class:pa?(pa.subClass||pa.type):"", currentPrice:pa?pa.currentPrice:0, ceilingPrice:null, deltaCeiling:null});
+        }
+      });
       reportAssets.sort(function(a,b){var va=allocations[a.ticker]||{};var vb=allocations[b.ticker]||{};return(vb.value||0)-(va.value||0);});
       for(var ai=0;ai<reportAssets.length;ai++){
         var c=reportAssets[ai];var an=allocations[c.ticker];if(!an)continue;
@@ -2260,7 +2442,7 @@ function ConsultiveReportModal(p) {
         setF(C.bg_card);setD(C.rule);doc.rect(ML,y-1,CW,22,"DF");
         doc.setFontSize(16);doc.setFont("helvetica","bold");setC(C.title);doc.text(c.ticker,ML+4,y+7);
         doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(c.name+"  ·  "+(c.class||""),ML+4,y+13);
-        if(an.value){doc.setFontSize(7);setC(C.positive);doc.text("Aporte: R$ "+(an.value||0).toLocaleString("pt-BR")+" — "+an.verdict,ML+4,y+18);}
+        if(an.value){var absVal=Math.abs(an.value);var isSell=an.type==="sell";var qtyText="";if(c.currentPrice>0){qtyText=" (≈ "+Math.floor(absVal/c.currentPrice)+" cotas/ações)";}doc.setFontSize(7);setC(isSell?C.negative:C.positive);doc.text((isSell?"Venda: R$ ":"Aporte: R$ ")+absVal.toLocaleString("pt-BR")+qtyText+" — "+an.verdict,ML+4,y+18);}
         var verdictMap={"APORTAR":{bg:C.positive_bg,fg:C.positive},"MANTER":{bg:C.blue_bg,fg:C.blue},"REDUZIR":{bg:C.negative_bg,fg:C.negative},"AGUARDAR":{bg:C.amber_bg,fg:C.amber},"NOVO":{bg:C.positive_bg,fg:C.positive}};
         var vInfo=verdictMap[an.verdict]||verdictMap["AGUARDAR"];
         var vW=24;setF(vInfo.bg);doc.rect(W-MR-vW-4,y+2,vW,7,"F");
@@ -2404,7 +2586,7 @@ function ConsultiveReportModal(p) {
                 </div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"12px"}}>
                   <div><label style={lS}>Consultor</label><input value={consultorName} onChange={function(e){setConsultorName(e.target.value);}} style={iS}/></div>
-                  <div><label style={lS}>Período</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} placeholder="Abr/2026" style={iS}/></div>
+                  <div><label style={lS}>Período</label><input value={period} onChange={function(e){setPeriod(e.target.value);}} type="month" style={iS}/></div>
                 </div>
 
                 {/* STEP 1: Position */}
@@ -2422,159 +2604,227 @@ function ConsultiveReportModal(p) {
                     <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
                   </label>
                   {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos carregados{editingProfile&&editingProfile.posImportDate&&!posFile?" (posição de "+editingProfile.posImportDate+")":""}</div>}
-                  <div style={{marginBottom:"10px"}}><label style={lS}>Caixa disponível (R$)</label><input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} type="number" placeholder="50000" style={iS}/></div>
+                  <div style={{marginBottom:"10px"}}><label style={lS}>Caixa disponível (R$)</label><input value={availableCash?("R$ "+formatBRL(availableCash)):""} onChange={function(e){setAvailableCash(String(parseBRL(e.target.value)));}} placeholder="R$ 50.000" style={iS}/></div>
                   <button onClick={function(){buildAssetList();}} disabled={posAssets.length===0} style={Object.assign({},btnBase,{width:"100%",background:posAssets.length>0?"#DC2626":"rgba(255,255,255,0.05)",color:posAssets.length>0?"#fff":"rgba(255,255,255,0.3)"})}>{posAssets.length>0?"Selecionar Ativos →":"Importe a posição primeiro"}</button>
                 </div>)}
 
                 {/* STEP 2: Select with filters */}
                 {recStep==="select"&&crossrefData&&(function(){
                   var cartNames=[];(carteirasData.carteiras||[]).forEach(function(cart){if((carteirasData.ativos[cart.id]||[]).length>0)cartNames.push(cart.name);});
-                  
-                  // ── Classify asset using Excel subClass + classe ──
-                  function classifyAsset(ticker, subClass, classe, classHint) {
-                    var sc = (subClass||"").toLowerCase();
-                    var cl = (classe||"").toLowerCase();
-                    var ch = (classHint||"").toLowerCase();
-                    var tk = (ticker||"").toUpperCase();
-                    // Use Excel subClass first (most reliable)
-                    if(sc.indexOf("fii")>=0||sc.indexOf("imobili")>=0) return "FIIs";
-                    if(sc.indexOf("aço")>=0||sc==="ações"||sc==="acoes") return "Ações BR";
-                    if(sc.indexOf("etf")>=0) return "Internacional"; // ETFs like IVVB11, NASD11 are international exposure
-                    if(sc.indexOf("indexado")>=0||sc.indexOf("juros")>=0||sc.indexOf("fundo")>=0) return "Renda Fixa";
-                    if(sc.indexOf("caixa")>=0||sc==="caixa") return "Renda Fixa";
-                    // Use Excel classe
-                    if(cl.indexOf("renda fixa")>=0||cl.indexOf("caixa")>=0) return "Renda Fixa";
-                    if(cl.indexOf("renda vari")>=0) {
-                      // Need subclass to differentiate RV types
-                      if(/^[A-Z]{4}11$/.test(tk)) return "FIIs";
-                      if(/^[A-Z]{4}(3|4|5|6)$/.test(tk)) return "Ações BR";
-                      return "Ações BR";
+
+                  // Map asset to BIAS_CLASSES subclass
+                  function mapToSubclass(ticker, subClass, classe, classHint) {
+                    var sc=(subClass||"").toLowerCase(); var cl=(classe||"").toLowerCase(); var ch=(classHint||"").toLowerCase(); var tk=(ticker||"").toUpperCase();
+                    if(sc==="caixa"||cl==="caixa") return "Cash";
+                    if(sc.indexOf("indexado")>=0||sc.indexOf("juros")>=0) return "Pós-fixado";
+                    if(sc.indexOf("inflac")>=0||sc.indexOf("ipca")>=0) return "IPCA+";
+                    if(sc.indexOf("pre")>=0&&sc.indexOf("fix")>=0) return "Pré-fixado";
+                    if(sc.indexOf("fundo")>=0&&cl.indexOf("renda fixa")>=0) return "Pós-fixado";
+                    if(cl.indexOf("renda fixa")>=0) return "Pós-fixado"; // default RF
+                    if(sc.indexOf("fii")>=0||sc.indexOf("imobili")>=0||ch.indexOf("fii")>=0) return "FIIs";
+                    if(sc.indexOf("etf")>=0) {
+                      if(/^(IVVB|NASD|HASH|EURP|XINA|ACWI)/i.test(tk)) return "Equities Offshore";
+                      return "Ações Brasil";
                     }
-                    // Fallback: use JB class hint or ticker pattern
-                    if(ch.indexOf("fii")>=0||ch.indexOf("imobili")>=0) return "FIIs";
-                    if(ch.indexOf("intern")>=0) return "Internacional";
-                    if(ch.indexOf("renda")>=0||ch.indexOf("fix")>=0) return "Renda Fixa";
-                    if(ch.indexOf("alter")>=0) return "Alternativos";
+                    if(sc.indexOf("aço")>=0||sc==="ações"||ch.indexOf("aço")>=0||ch.indexOf("ações")>=0) return "Ações Brasil";
+                    if(sc.indexOf("alter")>=0||ch.indexOf("alter")>=0) return "Alternativos";
+                    if(ch.indexOf("intern")>=0||ch.indexOf("offshore")>=0) return "Equities Offshore";
                     if(/^[A-Z]{4}11$/.test(tk)) return "FIIs";
-                    if(/^[A-Z]{4}(3|4|5|6|33|34)$/.test(tk)) return "Ações BR";
-                    if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Internacional";
-                    return "Ações BR";
+                    if(/^[A-Z]{4}(3|4|5|6)$/.test(tk)) return "Ações Brasil";
+                    if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Equities Offshore";
+                    return "Ações Brasil";
                   }
 
-                  // ── Build class summary: JB meta vs Excel position ──
-                  var classMap = {"Renda Fixa":{jb:0,pos:0,posValue:0,tickers:[]},"Ações BR":{jb:0,pos:0,posValue:0,tickers:[]},"FIIs":{jb:0,pos:0,posValue:0,tickers:[]},"Internacional":{jb:0,pos:0,posValue:0,tickers:[]},"Alternativos":{jb:0,pos:0,posValue:0,tickers:[]}};
+                  // Build structured data by BIAS_CLASSES
+                  var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+                  var subclassData = {};
+                  ALL_BIAS_ITEMS.forEach(function(item){ subclassData[item] = {jb:0, pos:0, posValue:0, assets:[]}; });
 
-                  // JB meta % from allocationMacro
+                  // JB meta by subclass (from allocationTable if available)
                   var jbd = editingProfile ? editingProfile.jbData : null;
                   var allocClasses = jbd && jbd.allocationMacro ? jbd.allocationMacro.classes : [];
-                  var allocMap = {"Renda Fixa":"Renda Fixa","Ações":"Ações BR","Acoes":"Ações BR","FIIs":"FIIs","Internacional":"Internacional","Alternativo":"Alternativos","Multimercado":"Alternativos"};
-                  allocClasses.forEach(function(ac){ var k = allocMap[ac.name]||ac.name; if(classMap[k]){classMap[k].jb=ac.suggestedPercent||0;} });
-                  // Fallback to profile allocation if JB doesn't have it
-                  var profAlloc = editingProfile ? editingProfile.allocation : null;
-                  if(profAlloc){ Object.keys(profAlloc).forEach(function(k){ if(classMap[k] && profAlloc[k].target && classMap[k].jb === 0) classMap[k].jb = profAlloc[k].target; }); }
+                  var jbMap = {"Renda Fixa":"Pós-fixado","Ações":"Ações Brasil","FIIs":"FIIs","Internacional":"Equities Offshore","Alternativo":"Alternativos","Caixa":"Cash"};
+                  allocClasses.forEach(function(ac){ var k=jbMap[ac.name]||ac.name; if(subclassData[k]) subclassData[k].jb=ac.suggestedPercent||0; });
 
-                  // Position % from EXCEL posAssets (source of truth)
-                  var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+                  // Position from Excel
                   posAssets.forEach(function(pa){
-                    var mapped = classifyAsset(pa.ticker, pa.subClass, pa.type, "");
-                    if(classMap[mapped]){
-                      classMap[mapped].posValue += (pa.totalValue||0);
-                    }
+                    var mapped = mapToSubclass(pa.ticker, pa.subClass, pa.type, "");
+                    if(subclassData[mapped]){ subclassData[mapped].posValue += (pa.totalValue||0); }
                   });
-                  // Calculate pos % from Excel values
-                  if(posTotal > 0){
-                    Object.keys(classMap).forEach(function(k){ classMap[k].pos = classMap[k].posValue / posTotal * 100; });
-                  }
+                  if(posTotal>0){ ALL_BIAS_ITEMS.forEach(function(item){ subclassData[item].pos = subclassData[item].posValue/posTotal*100; }); }
 
-                  // Map crossref assets to classes for ticker list + enrich with classTag
+                  // Assign crossref assets to subclasses
                   crossrefData.forEach(function(a){
-                    // Find matching posAsset for subClass info
-                    var pa = null;
-                    for(var pi=0;pi<posAssets.length;pi++){if(posAssets[pi].ticker===a.ticker){pa=posAssets[pi];break;}}
-                    var mapped = classifyAsset(a.ticker, pa?pa.subClass:"", pa?pa.type:"", a.class);
-                    a._classTag = mapped;
-                    if(classMap[mapped]) classMap[mapped].tickers.push(a.ticker);
+                    var pa=null; for(var pi=0;pi<posAssets.length;pi++){if(posAssets[pi].ticker===a.ticker){pa=posAssets[pi];break;}}
+                    var mapped = mapToSubclass(a.ticker, pa?pa.subClass:"", pa?pa.type:"", a.class);
+                    a._subclass = mapped;
+                    a._classTag = BIAS_CLASSES.find(function(g){return g.items.indexOf(mapped)>=0;});
+                    a._classTag = a._classTag ? a._classTag.group : "Equities";
+                    if(subclassData[mapped]) subclassData[mapped].assets.push(a);
                   });
 
-                  var filtered=crossrefData.filter(function(c){
+                  // Apply filters
+                  function passesFilters(c) {
                     if(filterVies!=="all"){var v=c.carteiraSuno?c.carteiraSuno.vies:null;if(v!==filterVies)return false;}
                     if(filterCarteira!=="all"){var ca=c.carteiraSuno?c.carteiraSuno.carteira:null;if(ca!==filterCarteira)return false;}
-                    if(filterClasse!=="all"){if(c._classTag!==filterClasse)return false;}
                     if(filterSentiment!=="all"&&c.appMatch&&c.appMatch.sentiment!==filterSentiment)return false;
                     if(filterRank!=="all"&&c.carteiraSuno){var r=c.carteiraSuno.rank||999;if(filterRank==="top5"&&r>5)return false;if(filterRank==="top10"&&r>10)return false;}
                     if(filterMargem!=="all"&&c.deltaCeiling!=null){if(filterMargem==="desconto"&&c.deltaCeiling<=0)return false;if(filterMargem==="desconto20"&&c.deltaCeiling<=20)return false;}
                     return true;
-                  });
+                  }
+
                   var selCt=Object.keys(selectedAssets).length;
+                  var totalFiltered = crossrefData.filter(passesFilters).length;
+                  var viesColors={"Comprar":"#4ade80","Aguardar":"#fbbf24","Vender":"#f87171"};
 
                   return <div>
-                    {/* CLASS DASHBOARD - JB Meta vs Posição Excel */}
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-                      <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Posição atual do Excel{posTotal>0?" · Patrimônio: R$ "+posTotal.toLocaleString("pt-BR",{maximumFractionDigits:0}):""}</div>
+                    {/* Legend */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                      <span style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>{selCt} selecionados</span>
                       <div style={{display:"flex",gap:"12px",fontSize:"9px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#60a5fa"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Meta do Plano (JB)</span></div>
-                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#fbbf24"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Carteira Atual (Excel)</span></div>
+                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#60a5fa"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Meta (JB)</span></div>
+                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#fbbf24"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Atual (Excel)</span></div>
                       </div>
                     </div>
-                    <div style={{display:"flex",gap:"4px",marginBottom:"12px",flexWrap:"wrap"}}>
-                      {Object.keys(classMap).map(function(cls){
-                        var cm=classMap[cls]; var diff=cm.jb-cm.pos; var isActive=filterClasse===cls;
-                        var diffColor=diff>3?"#4ade80":diff<-3?"#f87171":"#94a3b8";
-                        return <div key={cls} onClick={function(){setFilterClasse(isActive?"all":cls);}} style={{flex:1,minWidth:"100px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",background:isActive?"rgba(220,38,38,0.1)":"rgba(255,255,255,0.02)",border:isActive?"1px solid rgba(220,38,38,0.3)":"1px solid rgba(255,255,255,0.05)",textAlign:"center"}}>
-                          <div style={{fontSize:"9px",fontWeight:700,color:isActive?"#DC2626":"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"4px"}}>{cls}</div>
-                          <div style={{display:"flex",justifyContent:"center",gap:"8px",alignItems:"baseline"}}>
-                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#60a5fa"}}>{cm.jb.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(96,165,250,0.5)"}}>Meta</div></div>
-                            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.15)"}}>→</div>
-                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#fbbf24"}}>{cm.pos.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(251,191,36,0.5)"}}>Atual</div></div>
-                          </div>
-                          <div style={{fontSize:"9px",fontWeight:700,color:diffColor,marginTop:"2px"}}>{diff>0?"+":""}{diff.toFixed(0)}pp {diff>3?"sub-alocado":diff<-3?"sobre-alocado":"ok"}</div>
-                          {cm.posValue>0&&<div style={{fontSize:"8px",color:"rgba(255,255,255,0.2)",marginTop:"1px"}}>R$ {cm.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0})}</div>}
-                          <div style={{fontSize:"8px",color:"rgba(255,255,255,0.15)",marginTop:"1px"}}>{cm.tickers.length} ativos</div>
-                        </div>;
-                      })}
-                    </div>
 
-                    {/* Filters row */}
-                    <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"8px"}}>
+                    {/* Filters */}
+                    <div style={{display:"flex",gap:"4px",flexWrap:"wrap",marginBottom:"10px"}}>
                       <select value={filterVies} onChange={function(e){setFilterVies(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Viés: Todos</option><option value="Comprar">Comprar</option><option value="Aguardar">Aguardar</option></select>
                       <select value={filterCarteira} onChange={function(e){setFilterCarteira(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Carteira: Todas</option>{cartNames.map(function(cn){return <option key={cn} value={cn}>{cn}</option>;})}</select>
                       <select value={filterSentiment} onChange={function(e){setFilterSentiment(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Sentimento: Todos</option><option value="positive">Positivo</option><option value="neutral">Neutro</option><option value="negative">Negativo</option></select>
                       <select value={filterRank} onChange={function(e){setFilterRank(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Rank: Todos</option><option value="top5">Top 5</option><option value="top10">Top 10</option></select>
                       <select value={filterMargem} onChange={function(e){setFilterMargem(e.target.value);}} style={{background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.15)",borderRadius:"6px",padding:"5px 10px",color:"#e2e8f0",fontSize:"10px",outline:"none"}}><option value="all">Margem: Todas</option><option value="desconto">Com desconto</option><option value="desconto20">&gt;20%</option></select>
-                    </div>
-
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
-                      <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>{filtered.length} visíveis · {selCt} selecionados</span>
-                      <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
-                        <span style={{fontSize:"8px",color:"rgba(96,165,250,0.5)"}}>Meta%</span><span style={{fontSize:"7px",color:"rgba(255,255,255,0.1)"}}>→</span><span style={{fontSize:"8px",color:"rgba(251,191,36,0.5)"}}>Atual%</span>
-                        <button onClick={function(){var sel={};filtered.forEach(function(c){sel[c.ticker]=true;});setSelectedAssets(function(prev){return Object.assign({},prev,sel);});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Sel. visíveis</button>
-                        <button onClick={function(){setSelectedAssets({});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(220,38,38,0.15)",background:"transparent",color:"rgba(220,38,38,0.4)",cursor:"pointer"}}>Limpar</button>
+                      <div style={{marginLeft:"auto",display:"flex",gap:"4px",alignItems:"center"}}>
+                        {quotesUpdated&&<span style={{fontSize:"8px",color:"rgba(74,222,128,0.5)"}}>Preços {quotesUpdated}</span>}
+                        <button onClick={fetchQuotes} disabled={quotesLoading} style={{fontSize:"8px",padding:"4px 8px",borderRadius:"4px",border:"1px solid rgba(74,222,128,0.2)",background:quotesLoading?"rgba(74,222,128,0.05)":"rgba(74,222,128,0.08)",color:quotesLoading?"rgba(74,222,128,0.3)":"#4ade80",cursor:quotesLoading?"wait":"pointer",fontWeight:600}}>{quotesLoading?"Buscando...":"Atualizar Cotações"}</button>
+                        <button onClick={function(){var sel={};crossrefData.filter(passesFilters).forEach(function(c){sel[c.ticker]=true;});setSelectedAssets(function(prev){return Object.assign({},prev,sel);});}} style={{fontSize:"8px",padding:"4px 8px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Sel. visíveis</button>
+                        <button onClick={function(){setSelectedAssets({});}} style={{fontSize:"8px",padding:"4px 8px",borderRadius:"4px",border:"1px solid rgba(220,38,38,0.15)",background:"transparent",color:"rgba(220,38,38,0.4)",cursor:"pointer"}}>Limpar</button>
                       </div>
                     </div>
 
-                    {/* Asset list with checkboxes */}
-                    <div style={{maxHeight:"340px",overflow:"auto",marginBottom:"12px",border:"1px solid rgba(255,255,255,0.04)",borderRadius:"8px"}}>
-                      {filtered.map(function(c){
-                        var isSel=!!selectedAssets[c.ticker];
-                        var vC=c.carteiraSuno?({"Comprar":"#4ade80","Aguardar":"#fbbf24","Vender":"#f87171"}[c.carteiraSuno.vies]||"#94a3b8"):"#94a3b8";
-                        return <div key={c.ticker} style={{padding:"6px 10px",borderBottom:"1px solid rgba(255,255,255,0.03)",background:isSel?"rgba(220,38,38,0.04)":"transparent",display:"flex",alignItems:"center",gap:"8px"}}>
-                          <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
-                          <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",minWidth:"50px"}}>{c.ticker}</span>
-                          <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                          {/* JB% vs Pos% from Excel */}
-                          <div style={{display:"flex",gap:"2px",alignItems:"center",flexShrink:0,minWidth:"90px",justifyContent:"flex-end"}}>
-                            {c.jbPercent>0&&<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(96,165,250,0.1)",color:"#60a5fa",fontWeight:600}}>{c.jbPercent.toFixed(1)}%</span>}
-                            {(c.jbPercent>0||c.posPercent>0)&&<span style={{fontSize:"7px",color:"rgba(255,255,255,0.15)"}}>→</span>}
-                            {c.posPercent>0?<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",fontWeight:600}}>{c.posPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.2)"}}>—</span>}
+                    {/* Structured table by BIAS_CLASSES */}
+                    <div style={{maxHeight:"420px",overflow:"auto",marginBottom:"12px",border:"1px solid rgba(255,255,255,0.06)",borderRadius:"8px"}}>
+                      {/* Column headers */}
+                      <div style={{padding:"4px 10px 4px 32px",borderBottom:"1px solid rgba(255,255,255,0.08)",display:"flex",alignItems:"center",gap:"4px",position:"sticky",top:0,background:"#0A0A0A",zIndex:2}}>
+                        <span style={{width:"20px",flexShrink:0}}></span>
+                        <span style={{width:"52px",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>TICKER</span>
+                        <span style={{flex:1,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>EMPRESA</span>
+                        <span style={{width:"72px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>META → ATUAL</span>
+                        <span style={{width:"28px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>RANK</span>
+                        <span style={{width:"22px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>NOTA</span>
+                        <span style={{width:"32px",textAlign:"right",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>DESC.</span>
+                      </div>
+                      {BIAS_CLASSES.map(function(group){
+                        var groupAssets = group.items.reduce(function(s,item){return s.concat(subclassData[item].assets);}, []);
+                        var groupFiltered = groupAssets.filter(passesFilters);
+                        var groupJb = group.items.reduce(function(s,item){return s+subclassData[item].jb;},0);
+                        var groupPos = group.items.reduce(function(s,item){return s+subclassData[item].pos;},0);
+                        var groupVal = group.items.reduce(function(s,item){return s+subclassData[item].posValue;},0);
+                        var groupDiff = groupJb - groupPos;
+                        var diffColor = groupDiff>3?"#4ade80":groupDiff<-3?"#f87171":"#94a3b8";
+
+                        return <div key={group.group}>
+                          {/* Group header */}
+                          <div style={{padding:"8px 10px",background:"rgba(220,38,38,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                            <span style={{fontSize:"11px",fontWeight:800,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>{group.group}</span>
+                            <div style={{display:"flex",gap:"10px",alignItems:"center",fontSize:"10px"}}>
+                              <span style={{color:"#60a5fa",fontWeight:700}}>{groupJb.toFixed(0)}%</span>
+                              <span style={{color:"rgba(255,255,255,0.15)"}}>→</span>
+                              <span style={{color:"#fbbf24",fontWeight:700}}>{groupPos.toFixed(0)}%</span>
+                              {groupVal>0&&<span style={{color:"rgba(255,255,255,0.3)",fontSize:"9px"}}>R$ {groupVal.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
+                              <span style={{color:diffColor,fontWeight:700,fontSize:"9px"}}>{groupDiff>0?"+":""}{groupDiff.toFixed(0)}pp</span>
+                            </div>
                           </div>
-                          {c.carteiraSuno&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:vC+"18",color:vC,fontWeight:600,flexShrink:0}}>#{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
-                          {c.appMatch&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:c.appMatch.sentiment==="positive"?"rgba(74,222,128,0.1)":"rgba(255,255,255,0.04)",color:c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8",flexShrink:0}}>{c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1):""}</span>}
-                          {c.deltaCeiling!=null&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",color:c.deltaCeiling>0?"#4ade80":"#f87171",fontWeight:600,flexShrink:0}}>{c.deltaCeiling>0?"+":""}{c.deltaCeiling}%</span>}
+
+                          {/* Subclass rows */}
+                          {group.items.map(function(item){
+                            var sd = subclassData[item];
+                            var itemAssets = sd.assets.filter(passesFilters);
+                            if(itemAssets.length === 0 && sd.jb === 0 && sd.posValue === 0) return null;
+                            var itemDiff = sd.jb - sd.pos;
+                            var idColor = itemDiff>2?"#4ade80":itemDiff<-2?"#f87171":"#94a3b8";
+
+                            return <div key={item}>
+                              {/* Subclass header */}
+                              <div style={{padding:"5px 10px 5px 20px",background:"rgba(255,255,255,0.02)",borderBottom:"1px solid rgba(255,255,255,0.03)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                                <span style={{fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)"}}>{item}</span>
+                                <div style={{display:"flex",gap:"8px",alignItems:"center",fontSize:"9px"}}>
+                                  <span style={{color:"rgba(96,165,250,0.7)"}}>{sd.jb.toFixed(0)}%</span>
+                                  <span style={{color:"rgba(255,255,255,0.1)"}}>→</span>
+                                  <span style={{color:"rgba(251,191,36,0.7)"}}>{sd.pos.toFixed(0)}%</span>
+                                  {sd.posValue>0&&<span style={{color:"rgba(255,255,255,0.2)"}}>R$ {sd.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
+                                  <span style={{color:idColor,fontSize:"8px"}}>{itemDiff>0?"+":""}{itemDiff.toFixed(0)}pp</span>
+                                  <span style={{color:"rgba(255,255,255,0.15)"}}>{itemAssets.length} ativos</span>
+                                </div>
+                              </div>
+
+                              {/* Assets in this subclass */}
+                              {itemAssets.map(function(c){
+                                var isSel=!!selectedAssets[c.ticker];
+                                var vC=c.carteiraSuno?(viesColors[c.carteiraSuno.vies]||"#94a3b8"):"#94a3b8";
+                                return <div key={c.ticker} style={{padding:"5px 10px 5px 32px",borderBottom:"1px solid rgba(255,255,255,0.02)",background:isSel?"rgba(220,38,38,0.04)":"transparent",display:"flex",alignItems:"center",gap:"4px"}}>
+                                  <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
+                                  <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",width:"52px",flexShrink:0}}>{c.ticker}</span>
+                                  <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
+                                  <div style={{display:"flex",gap:"2px",alignItems:"center",width:"72px",justifyContent:"center",flexShrink:0}}>
+                                    {c.jbPercent>0?<span style={{fontSize:"8px",padding:"1px 3px",borderRadius:"3px",background:"rgba(96,165,250,0.1)",color:"#60a5fa"}}>{c.jbPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",color:"rgba(255,255,255,0.08)"}}>—</span>}
+                                    <span style={{fontSize:"6px",color:"rgba(255,255,255,0.1)"}}>→</span>
+                                    {c.posPercent>0?<span style={{fontSize:"8px",padding:"1px 3px",borderRadius:"3px",background:"rgba(251,191,36,0.1)",color:"#fbbf24"}}>{c.posPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",color:"rgba(255,255,255,0.08)"}}>—</span>}
+                                  </div>
+                                  <span style={{width:"28px",textAlign:"center",flexShrink:0,fontSize:"7px",padding:"1px 0",borderRadius:"4px",background:c.carteiraSuno?(vC+"18"):"transparent",color:c.carteiraSuno?vC:"transparent",fontWeight:600}}>{c.carteiraSuno?("#"+c.carteiraSuno.rank):""}</span>
+                                  <span style={{width:"22px",textAlign:"center",flexShrink:0,fontSize:"7px",color:c.appMatch?(c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8"):"transparent"}}>{c.appMatch&&c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1):""}</span>
+                                  <span style={{width:"32px",textAlign:"right",flexShrink:0,fontSize:"7px",color:c.deltaCeiling!=null?(c.deltaCeiling>0?"#4ade80":"#f87171"):"transparent",fontWeight:600}}>{c.deltaCeiling!=null?((c.deltaCeiling>0?"+":"")+c.deltaCeiling+"%"):""}</span>
+                                </div>;
+                              })}
+                            </div>;
+                          })}
                         </div>;
                       })}
                     </div>
 
-                    {/* Actions */}
+                    {/* ── SELL SECTION: assets in Excel position not selected for buy ── */}
+                    {posAssets.length>0&&(function(){
+                      var sellTotal = Object.keys(sellAssets).reduce(function(s,tk){return s+(sellAssets[tk].value||0);},0);
+                      var totalCash = (parseFloat(availableCash)||0) + sellTotal;
+                      // Show position assets that could be sold
+                      var posForSale = posAssets.filter(function(pa){
+                        return pa.totalValue > 0 && pa.ticker.length <= 10;
+                      });
+                      if(posForSale.length===0) return null;
+                      return <div style={{marginBottom:"12px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+                          <span style={{fontSize:"10px",fontWeight:700,color:"#f87171",textTransform:"uppercase",letterSpacing:"1px"}}>Vendas</span>
+                          <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>
+                            {sellTotal>0&&<span style={{color:"#f87171",fontWeight:600}}>Vendas: R$ {sellTotal.toLocaleString("pt-BR")} · </span>}
+                            <span style={{color:"#4ade80",fontWeight:600}}>Caixa total: R$ {totalCash.toLocaleString("pt-BR")}</span>
+                          </div>
+                        </div>
+                        <div style={{maxHeight:"180px",overflow:"auto",border:"1px solid rgba(248,113,113,0.1)",borderRadius:"8px"}}>
+                          {posForSale.map(function(pa){
+                            var isSelling = !!sellAssets[pa.ticker];
+                            var sellVal = isSelling ? sellAssets[pa.ticker].value : 0;
+                            return <div key={pa.ticker} style={{padding:"5px 10px",borderBottom:"1px solid rgba(255,255,255,0.02)",background:isSelling?"rgba(248,113,113,0.04)":"transparent",display:"flex",alignItems:"center",gap:"6px"}}>
+                              <input type="checkbox" checked={isSelling} onChange={function(){setSellAssets(function(prev){var n=Object.assign({},prev);if(n[pa.ticker])delete n[pa.ticker];else n[pa.ticker]={value:Math.round(pa.totalValue),total:true};return n;});}} style={{accentColor:"#f87171",flexShrink:0}}/>
+                              <span style={{fontWeight:700,fontSize:"11px",color:isSelling?"#f87171":"#f1f5f9",width:"52px",flexShrink:0}}>{pa.ticker}</span>
+                              <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pa.name||pa.subClass||""}</span>
+                              <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flexShrink:0}}>R$ {(pa.totalValue||0).toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>
+                              {isSelling&&<input type="number" value={sellVal||""} onChange={function(e){setSellAssets(function(prev){var n=Object.assign({},prev);n[pa.ticker]=Object.assign({},n[pa.ticker],{value:parseInt(e.target.value)||0,total:false});return n;});}} style={{width:"80px",background:"rgba(248,113,113,0.05)",border:"1px solid rgba(248,113,113,0.2)",borderRadius:"4px",color:"#f87171",fontSize:"10px",textAlign:"right",padding:"3px 6px",outline:"none",fontWeight:700}} placeholder="Valor"/>}
+                            </div>;
+                          })}
+                        </div>
+                      </div>;
+                    })()}
+
+                    {/* Writing tone selector + generate button */}
+                    <div style={{display:"flex",gap:"8px",alignItems:"center",marginBottom:"8px"}}>
+                      <label style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",whiteSpace:"nowrap"}}>Tom do texto:</label>
+                      {["simples","intermediario","profissional"].map(function(t){
+                        var labels={"simples":"Simples","intermediario":"Intermediário","profissional":"Profissional"};
+                        var active=writingTone===t;
+                        return <button key={t} onClick={function(){setWritingTone(t);}} style={{padding:"4px 10px",borderRadius:"14px",border:active?"1px solid #DC2626":"1px solid rgba(255,255,255,0.08)",background:active?"rgba(220,38,38,0.12)":"transparent",color:active?"#DC2626":"rgba(255,255,255,0.35)",fontSize:"9px",fontWeight:active?700:500,cursor:"pointer"}}>{labels[t]}</button>;
+                      })}
+                    </div>
+
                     <div style={{display:"flex",gap:"8px"}}>
                       <button onClick={function(){setRecStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
                       <button onClick={function(){generatePreview();}} disabled={selCt===0||generating} style={Object.assign({},btnBase,{flex:1,background:selCt>0&&!generating?"#DC2626":"rgba(255,255,255,0.05)",color:selCt>0&&!generating?"#fff":"rgba(255,255,255,0.3)"})}>{generating?genProgress:("Gerar Recomendações ("+selCt+") →")}</button>
@@ -2593,14 +2843,17 @@ function ConsultiveReportModal(p) {
                     </div>
 
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                      <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px"}}>Distribuição do Caixa — R$ {(parseFloat(availableCash)||0).toLocaleString("pt-BR")}</div>
-                      <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>Total alocado: R$ {Object.keys(allocations).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")}</div>
+                      <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px"}}>Distribuição do Caixa</div>
+                      <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>
+                        Compras: R$ {Object.keys(allocations).filter(function(tk){return(allocations[tk].type||"buy")==="buy";}).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")}
+                        {Object.keys(allocations).some(function(tk){return allocations[tk].type==="sell";})&&<span style={{color:"#f87171"}}> · Vendas: R$ {Object.keys(allocations).filter(function(tk){return allocations[tk].type==="sell";}).reduce(function(s,tk){return s+Math.abs(allocations[tk].value||0);},0).toLocaleString("pt-BR")}</span>}
+                      </div>
                     </div>
 
                     {Object.keys(allocations).map(function(tk){
                       var al=allocations[tk];
                       var cr=(crossrefData||[]).find(function(c){return c.ticker===tk;});
-                      var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24"};
+                      var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24","VENDER":"#f87171"};
                       return <div key={tk} style={{background:"#111",borderRadius:"10px",padding:"12px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"6px"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
                           <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
@@ -2608,13 +2861,20 @@ function ConsultiveReportModal(p) {
                             <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{cr?cr.name:""}</span>
                             {cr&&cr._classTag&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"5px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.3)"}}>{cr._classTag}</span>}
                           </div>
-                          <select value={al.verdict||"APORTAR"} onChange={function(e){updateAllocation(tk,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"3px 8px",color:vc[al.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}><option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option></select>
+                          <select value={al.verdict||"APORTAR"} onChange={function(e){updateAllocation(tk,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"3px 8px",color:vc[al.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}><option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option><option value="VENDER">VENDER</option></select>
                         </div>
                         <div style={{display:"flex",gap:"8px",marginBottom:"8px",alignItems:"center"}}>
-                          <div style={{flex:"0 0 120px"}}><label style={lS}>Valor (R$)</label><input type="number" value={al.value||""} onChange={function(e){updateAllocation(tk,"value",parseInt(e.target.value)||0);}} style={Object.assign({},iS,{fontSize:"13px",fontWeight:700,textAlign:"right"})}/></div>
+                          <div style={{flex:"0 0 120px"}}><label style={lS}>{al.type==="sell"?"Venda (R$)":"Valor (R$)"}</label><input type="number" value={Math.abs(al.value)||""} onChange={function(e){var v=parseInt(e.target.value)||0;updateAllocation(tk,"value",al.type==="sell"?-Math.abs(v):v);}} style={Object.assign({},iS,{fontSize:"13px",fontWeight:700,textAlign:"right",color:al.type==="sell"?"#f87171":"#e2e8f0",borderColor:al.type==="sell"?"rgba(248,113,113,0.2)":"rgba(255,255,255,0.08)"})}/></div>
+                          <div style={{flex:"0 0 80px",textAlign:"center"}}>
+                            {cr&&cr.currentPrice>0&&Math.abs(al.value)>0?(function(){
+                              var qty=Math.floor(Math.abs(al.value)/cr.currentPrice);
+                              var isSell=al.type==="sell";
+                              return <div><div style={{fontSize:"14px",fontWeight:800,color:isSell?"#f87171":"#a78bfa"}}>{qty}</div><div style={{fontSize:"7px",color:isSell?"rgba(248,113,113,0.5)":"rgba(167,139,250,0.5)"}}>≈ {isSell?"vender":"comprar"}</div></div>;
+                            })():<div style={{fontSize:"9px",color:"rgba(255,255,255,0.15)"}}>—</div>}
+                          </div>
                           <div style={{flex:1,fontSize:"10px",color:"rgba(255,255,255,0.3)",lineHeight:1.5}}>
-                            {cr&&cr.deltaCeiling!=null&&<span style={{color:cr.deltaCeiling>0?"#4ade80":"#f87171"}}>{cr.deltaCeiling>0?"+":""}{cr.deltaCeiling}% vs teto</span>}
-                            {cr&&cr.carteiraSuno&&<span style={{marginLeft:"8px"}}>#{cr.carteiraSuno.rank} {cr.carteiraSuno.vies}</span>}
+                            {cr&&cr.currentPrice>0&&<span>Preço: R$ {cr.currentPrice.toFixed(2)}</span>}
+                            {cr&&cr.deltaCeiling!=null&&<span style={{marginLeft:"8px",color:cr.deltaCeiling>0?"#4ade80":"#f87171"}}>{cr.deltaCeiling>0?"+":""}{cr.deltaCeiling}% vs teto</span>}
                           </div>
                         </div>
                         <textarea value={al.rationale||""} onChange={function(e){updateAllocation(tk,"rationale",e.target.value);setPreviewApproved(false);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
@@ -2642,7 +2902,11 @@ function ConsultiveReportModal(p) {
                     return <div key={tk} style={{background:"#111",borderRadius:"8px",padding:"10px 12px",border:"1px solid rgba(255,255,255,0.05)",marginBottom:"4px",display:"flex",gap:"12px",alignItems:"flex-start"}}>
                       <div style={{minWidth:"50px"}}><div style={{fontWeight:800,fontSize:"12px",color:"#f1f5f9"}}>{tk}</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{cr?cr.name:""}</div></div>
                       <div style={{flex:1,fontSize:"10px",color:"rgba(255,255,255,0.5)",lineHeight:1.5}}>{al.rationale}</div>
-                      <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:"13px",fontWeight:800,color:"#4ade80"}}>R$ {(al.value||0).toLocaleString("pt-BR")}</div><div style={{fontSize:"8px",color:"rgba(255,255,255,0.3)"}}>{al.verdict}</div></div>
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        <div style={{fontSize:"13px",fontWeight:800,color:al.type==="sell"?"#f87171":"#4ade80"}}>{al.type==="sell"?"- ":""}R$ {Math.abs(al.value||0).toLocaleString("pt-BR")}</div>
+                        {cr&&cr.currentPrice>0&&Math.abs(al.value)>0&&<div style={{fontSize:"9px",color:al.type==="sell"?"rgba(248,113,113,0.6)":"#a78bfa",fontWeight:600}}>≈ {Math.floor(Math.abs(al.value)/cr.currentPrice)} cotas</div>}
+                        <div style={{fontSize:"8px",color:"rgba(255,255,255,0.3)"}}>{al.verdict}</div>
+                      </div>
                     </div>;
                   })}
                   <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
@@ -2655,7 +2919,8 @@ function ConsultiveReportModal(p) {
                 {recStep==="pdf"&&(<div style={{textAlign:"center",padding:"20px 0"}}>
                   <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório de Recomendações</div>
                   <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {Object.keys(allocations).length} ativos · R$ {Object.keys(allocations).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")} · {period||"Mensal"}</div>
-                  <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar e Baixar PDF"}</button>
+                  <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar Relatório PDF"}</button>
+                  <button onClick={generateOperationalPDF} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.15)",color:"rgba(255,255,255,0.5)",padding:"12px 40px",fontSize:"12px",width:"100%",marginTop:"8px"})}>Gerar Tabela de Movimentações (Banker)</button>
                   <div style={{marginTop:"10px"}}><button onClick={function(){setRecStep("review");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Revisar</button></div>
                 </div>)}
               </div>)}
