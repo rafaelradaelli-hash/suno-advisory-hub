@@ -1635,8 +1635,8 @@ function CarteirasModal(p) {
 /* ─── Consultive Report Module v3 — 2 Sub-abas (Estratégia + Recomendação) ─── */
 var CONSULT_TAB_STRATEGY = "strategy";
 var CONSULT_TAB_RECOMMEND = "recommend";
-var REC_STEPS = ["position","select","review","pdf"];
-var REC_STEP_LABELS = {position:"1. Posição",select:"2. Selecionar Ativos",review:"3. Revisar",pdf:"4. PDF"};
+var REC_STEPS = ["position","select","preview","review","pdf"];
+var REC_STEP_LABELS = {position:"1. Posição",select:"2. Selecionar",preview:"3. Prévia IA",review:"4. Revisar",pdf:"5. PDF"};
 
 function ConsultiveReportModal(p) {
   var [mainTab, setMainTab] = useState(CONSULT_TAB_STRATEGY);
@@ -1661,6 +1661,8 @@ function ConsultiveReportModal(p) {
   var [posFileName, setPosFileName] = useState("");
   var [posAssets, setPosAssets] = useState([]);
   var [availableCash, setAvailableCash] = useState("");
+  var [allocations, setAllocations] = useState({}); // {ticker: {value: R$, text: "", verdict: ""}}
+  var [previewApproved, setPreviewApproved] = useState(false);
   var posFileRef = useRef(null);
   var [crossrefData, setCrossrefData] = useState(null);
   var [selectedAssets, setSelectedAssets] = useState({});
@@ -2045,51 +2047,110 @@ function ConsultiveReportModal(p) {
     return parts.join("\n");
   }
 
-  // ── Generate batch analysis for selected assets ──
-  async function generateBatchAnalysis() {
+  // ── Generate preview: strategy + cash distribution + rationale per asset ──
+  async function generatePreview() {
     var selected = (crossrefData || []).filter(function(c) { return selectedAssets[c.ticker]; });
     if (selected.length === 0) return;
-    setGenerating(true); setError(""); setGenProgress("Preparando " + selected.length + " ativos...");
+    setGenerating(true); setError(""); setGenProgress("Gerando prévia estratégica...");
+    setPreviewApproved(false);
     try {
       var profileCtx = buildProfileContext();
       var journeyCtx = buildJourneyContext();
       var carteirasCtx = buildCarteirasContext();
       var macroCtx = buildMacroCtxShort();
+      var cash = parseFloat(availableCash) || 0;
 
       var assetsCtx = selected.map(function(a) {
-        var ctx = { ticker: a.ticker, name: a.name, class: a.class, suggestedValue: a.suggestedValue, suggestedPercent: a.suggestedPercent, currentPrice: a.currentPrice, ceilingPrice: a.ceilingPrice, deltaCeiling: a.deltaCeiling, jbRationale: a.rationale, currentQty: a.currentQty, currentTotalValue: a.currentTotalValue, hasPosition: a.hasPosition };
-        if (a.appMatch) ctx.appData = { result: a.appMatch.result, sunoView: a.appMatch.sunoView, sentiment: a.appMatch.sentiment, rankScore: a.appMatch.rankScore };
+        var ctx = { ticker: a.ticker, name: a.name, class: a.class || a._classTag || "", jbPercent: a.jbPercent, posPercent: a.posPercent, posValue: a.posValue || 0, ceilingPrice: a.ceilingPrice, currentPrice: a.currentPrice, deltaCeiling: a.deltaCeiling, hasPosition: a.hasPosition };
+        if (a.appMatch) ctx.appData = { result: (a.appMatch.result||"").slice(0,200), sentiment: a.appMatch.sentiment, rankScore: a.appMatch.rankScore };
         if (a.carteiraSuno) ctx.carteiraSuno = { rank: a.carteiraSuno.rank, precoTeto: a.carteiraSuno.precoTeto, vies: a.carteiraSuno.vies, carteira: a.carteiraSuno.carteira };
         return ctx;
       });
 
-      var batchSize = 8;
-      var allResults = [];
-      for (var b = 0; b < assetsCtx.length; b += batchSize) {
-        var batch = assetsCtx.slice(b, b + batchSize);
-        var bn = Math.floor(b / batchSize) + 1;
-        var tb = Math.ceil(assetsCtx.length / batchSize);
-        setGenProgress("Lote " + bn + "/" + tb + " (" + batch.map(function(a){return a.ticker;}).join(", ") + ")...");
+      var sys = 'Voce e um consultor senior da Suno Consultoria gerando um RELATORIO DE RECOMENDACOES MENSAL.'
+        + ' Voce recebera: perfil do cliente, Journey Book (alocacoes-alvo), posicao atual (do Excel), momento macro, carteiras Suno, e a lista de ativos selecionados pelo consultor.'
+        + ' O consultor informou R$ ' + cash.toLocaleString("pt-BR") + ' de caixa disponivel para aplicar.'
+        + '\n\nGere um JSON com esta estrutura EXATA:'
+        + ' {"strategy":"TEXTO de 3-5 paragrafos comparando posicao atual vs JB, identificando gaps por classe, considerando momento macro e oportunidades. Direto, com numeros concretos. Sem markdown.",'
+        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO (3-4 frases) explicando por que faz sentido aportar nesse ativo nesse momento. Mencione ranking, preco-teto, desconto, resultado recente, aderencia ao JB.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
+        + '\n\nREGRAS:'
+        + ' 1) Distribua os R$ ' + cash.toLocaleString("pt-BR") + ' entre os ativos selecionados de forma inteligente.'
+        + ' 2) Priorize: ativos com maior desconto vs preco-teto, melhor ranking na carteira Suno, vies "Comprar", classes sub-alocadas vs JB.'
+        + ' 3) A soma dos values deve ser EXATAMENTE R$ ' + cash.toLocaleString("pt-BR") + '.'
+        + ' 4) Values devem ser numeros inteiros (sem centavos).'
+        + ' 5) Para ativos com vies "Aguardar", sugira valores menores ou zero.'
+        + ' 6) Siga principios de value investing.'
+        + ' JSON puro sem markdown.';
 
-        var sys = 'Voce e um consultor senior da Suno. Para CADA ativo, gere recomendacao CONCISA usando os pilares (perfil, JB, inteligencia, macro, carteira Suno). JSON puro: [{"ticker":"","text":"","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR","priority":3},...] Campo "text": 1 PARAGRAFO (4-6 frases) com visao, fundamentos, recomendacao com VALOR de aporte. Direto, profissional. Sem listas.';
-        var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa: R$ " + (availableCash || "0") + "\nATIVOS:\n" + JSON.stringify(batch);
+      var userMsg = profileCtx + "\n" + journeyCtx + "\n" + macroCtx + "\n" + carteirasCtx + "\nCaixa: R$ " + cash.toLocaleString("pt-BR") + "\nATIVOS SELECIONADOS:\n" + JSON.stringify(assetsCtx);
 
-        var resp = await fetch("/api/anthropic", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 4096, system: sys, messages: [{role:"user", content: userMsg}] }) });
-        if (!resp.ok) throw new Error("API " + resp.status);
-        var d = await resp.json(); var raw = "";
-        for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
-        raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-        var si = raw.indexOf("["); var ei = raw.lastIndexOf("]");
-        if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-        allResults = allResults.concat(JSON.parse(raw));
-      }
+      var resp = await fetch("/api/anthropic", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 6000, system: sys, messages: [{role:"user", content: userMsg}] }) });
+      if (!resp.ok) throw new Error("API " + resp.status);
+      var d = await resp.json(); var raw = "";
+      for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
+      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
+      if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
+      raw = raw.replace(/,\s*}/g, "}").replace(/,\s*\]/g, "]");
+      var parsed = JSON.parse(raw);
 
-      var aMap = {};
-      allResults.forEach(function(a) { aMap[a.ticker] = a; });
-      setAnalyses(aMap);
-      setRecStep("review");
+      setStrategyText(parsed.strategy || "");
+      var allocMap = {};
+      (parsed.allocations || []).forEach(function(a) {
+        allocMap[a.ticker] = { value: a.value || 0, percent: a.percent || 0, rationale: a.rationale || "", verdict: a.verdict || "APORTAR" };
+      });
+      setAllocations(allocMap);
+      setRecStep("preview");
     } catch(err) { console.error(err); setError("Erro: " + err.message); }
     setGenerating(false); setGenProgress("");
+  }
+
+  // ── Readjust after consultant changes values ──
+  async function readjustTexts() {
+    setGenerating(true); setError(""); setGenProgress("Reajustando textos...");
+    try {
+      var items = Object.keys(allocations).map(function(tk) {
+        var a = allocations[tk];
+        var cr = (crossrefData||[]).find(function(c){return c.ticker===tk;});
+        return { ticker: tk, name: cr?cr.name:"", value: a.value, verdict: a.verdict, class: cr?(cr._classTag||cr.class):"", ceilingPrice: cr?cr.ceilingPrice:null, deltaCeiling: cr?cr.deltaCeiling:null };
+      });
+      var totalAlloc = items.reduce(function(s,a){return s+(a.value||0);},0);
+
+      var sys = 'O consultor ajustou os valores de aporte. Reescreva APENAS os textos (rationale) para cada ativo, mantendo os valores informados. Tambem reescreva a strategy considerando a nova distribuicao.'
+        + ' JSON: {"strategy":"NOVO TEXTO 3-5 paragrafos","allocations":[{"ticker":"","rationale":"1 PARAGRAFO atualizado com o novo valor","verdict":"APORTAR|MANTER"}]} JSON puro.';
+      var userMsg = "Estrategia anterior:\n" + strategyText.slice(0,2000) + "\n\nNOVOS VALORES (total R$ " + totalAlloc.toLocaleString("pt-BR") + "):\n" + JSON.stringify(items) + "\n\n" + buildProfileContext() + "\n" + buildJourneyContext();
+
+      var resp = await fetch("/api/anthropic", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({model:"claude-sonnet-4-20250514", max_tokens:4096, system:sys, messages:[{role:"user",content:userMsg}]}) });
+      if (!resp.ok) throw new Error("API " + resp.status);
+      var d = await resp.json(); var raw = "";
+      for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) raw += d.content[i].text; }
+      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
+      if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
+      var parsed = JSON.parse(raw);
+      if (parsed.strategy) setStrategyText(parsed.strategy);
+      if (parsed.allocations) {
+        var newAlloc = Object.assign({}, allocations);
+        parsed.allocations.forEach(function(a) {
+          if (newAlloc[a.ticker]) {
+            newAlloc[a.ticker] = Object.assign({}, newAlloc[a.ticker], { rationale: a.rationale || newAlloc[a.ticker].rationale, verdict: a.verdict || newAlloc[a.ticker].verdict });
+          }
+        });
+        setAllocations(newAlloc);
+      }
+      setPreviewApproved(false);
+    } catch(err) { console.error(err); setError("Erro: " + err.message); }
+    setGenerating(false); setGenProgress("");
+  }
+
+  function updateAllocation(ticker, field, value) {
+    setAllocations(function(prev) {
+      var n = Object.assign({}, prev);
+      n[ticker] = Object.assign({}, n[ticker]);
+      n[ticker][field] = value;
+      return n;
+    });
+    setPreviewApproved(false);
   }
 
   function deselectAsset(ticker) {
@@ -2097,22 +2158,6 @@ function ConsultiveReportModal(p) {
     setAnalyses(function(prev) { var n = Object.assign({}, prev); delete n[ticker]; return n; });
   }
 
-  // ── Generate strategy text ──
-  async function generateStrategy() {
-    setGenerating(true); setError("");
-    try {
-      var selected = (crossrefData || []).filter(function(c) { return selectedAssets[c.ticker] && analyses[c.ticker]; });
-      var stratCtx = selected.map(function(a) { return {ticker:a.ticker, verdict:analyses[a.ticker].verdict, priority:analyses[a.ticker].priority, class:a.class, text:(analyses[a.ticker].text||"").slice(0,200)}; });
-      var sys = 'Voce e um consultor senior da Suno. Escreva uma SECAO ESTRATEGICA CONSOLIDADA mensal. Inclua: 1) Visao geral vs perfil. 2) Aderencia ao JB. 3) Destaques. 4) PLANO DE APORTES com valores. 4-6 paragrafos. Profissional. Sem markdown.';
-      var userMsg = buildProfileContext() + "\n" + buildJourneyContext() + "\n" + buildMacroCtxShort() + "\n" + buildCarteirasContext() + "\nCaixa: R$ " + (availableCash||"0") + "\nATIVOS SELECIONADOS:\n" + JSON.stringify(stratCtx);
-      var resp = await fetch("/api/anthropic", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({model:"claude-sonnet-4-20250514", max_tokens:3000, system:sys, messages:[{role:"user",content:userMsg}]}) });
-      if (!resp.ok) throw new Error("API " + resp.status);
-      var d = await resp.json(); var st = "";
-      for (var i = 0; i < d.content.length; i++) { if (d.content[i].text) st += d.content[i].text; }
-      setStrategyText(st.trim());
-    } catch(err) { console.error(err); setError("Erro: " + err.message); }
-    setGenerating(false);
-  }
 
   function updateAnalysis(ticker, field, value) {
     setAnalyses(function(prev) {
@@ -2155,15 +2200,15 @@ function ConsultiveReportModal(p) {
       for(var sli=0;sli<sLines.length;sli++){chk(4.5);doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);doc.text(sLines[sli],ML+2,y);y+=4.5;}
       y+=8;
       // INDIVIDUAL ANALYSES
-      var reportAssets=(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];});
-      reportAssets.sort(function(a,b){return(analyses[a.ticker].priority||3)-(analyses[b.ticker].priority||3);});
+      var reportAssets=(crossrefData||[]).filter(function(c){return allocations[c.ticker];});
+      reportAssets.sort(function(a,b){var va=allocations[a.ticker]||{};var vb=allocations[b.ticker]||{};return(vb.value||0)-(va.value||0);});
       for(var ai=0;ai<reportAssets.length;ai++){
-        var c=reportAssets[ai];var an=analyses[c.ticker];if(!an)continue;
+        var c=reportAssets[ai];var an=allocations[c.ticker];if(!an)continue;
         chk(50);
         setF(C.bg_card);setD(C.rule);doc.rect(ML,y-1,CW,22,"DF");
         doc.setFontSize(16);doc.setFont("helvetica","bold");setC(C.title);doc.text(c.ticker,ML+4,y+7);
         doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.secondary);doc.text(c.name+"  ·  "+(c.class||""),ML+4,y+13);
-        if(c.suggestedValue){doc.setFontSize(7);setC(C.caption);doc.text("Sugerido: R$ "+c.suggestedValue.toLocaleString("pt-BR",{minimumFractionDigits:0})+" ("+c.suggestedPercent.toFixed(1)+"%)",ML+4,y+18);}
+        if(an.value){doc.setFontSize(7);setC(C.positive);doc.text("Aporte: R$ "+(an.value||0).toLocaleString("pt-BR")+" — "+an.verdict,ML+4,y+18);}
         var verdictMap={"APORTAR":{bg:C.positive_bg,fg:C.positive},"MANTER":{bg:C.blue_bg,fg:C.blue},"REDUZIR":{bg:C.negative_bg,fg:C.negative},"AGUARDAR":{bg:C.amber_bg,fg:C.amber},"NOVO":{bg:C.positive_bg,fg:C.positive}};
         var vInfo=verdictMap[an.verdict]||verdictMap["AGUARDAR"];
         var vW=24;setF(vInfo.bg);doc.rect(W-MR-vW-4,y+2,vW,7,"F");
@@ -2171,7 +2216,7 @@ function ConsultiveReportModal(p) {
         if(an.priority){doc.setFontSize(6);setC(C.muted);doc.text("P"+an.priority,W-MR-vW-4+vW/2,y+12,{align:"center"});}
         y+=26;
         // Render text paragraph
-        var assetText = an.text || an.overview || "";
+        var assetText = an.rationale || an.text || "";
         if (assetText) {
           chk(12);doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.accent);doc.text("RECOMENDAÇÃO",ML+2,y);y+=5;
           doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC(C.body);
@@ -2466,39 +2511,84 @@ function ConsultiveReportModal(p) {
                     {/* Actions */}
                     <div style={{display:"flex",gap:"8px"}}>
                       <button onClick={function(){setRecStep("position");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
-                      <button onClick={function(){generateBatchAnalysis();}} disabled={selCt===0||generating} style={Object.assign({},btnBase,{flex:1,background:selCt>0&&!generating?"#DC2626":"rgba(255,255,255,0.05)",color:selCt>0&&!generating?"#fff":"rgba(255,255,255,0.3)"})}>{generating?genProgress:("Gerar Recomendações ("+selCt+") →")}</button>
+                      <button onClick={function(){generatePreview();}} disabled={selCt===0||generating} style={Object.assign({},btnBase,{flex:1,background:selCt>0&&!generating?"#DC2626":"rgba(255,255,255,0.05)",color:selCt>0&&!generating?"#fff":"rgba(255,255,255,0.3)"})}>{generating?genProgress:("Gerar Recomendações ("+selCt+") →")}</button>
                     </div>
                   </div>;
                 })()}
 
                 {/* STEP 3: Review */}
+                {/* STEP 3: Preview */}
+                {recStep==="preview"&&(<div>
+                  {generating&&<div style={{textAlign:"center",padding:"30px 0"}}><div style={{fontSize:"12px",fontWeight:600,color:"#DC2626",marginBottom:"6px"}}>Gerando prévia...</div><div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)"}}>{genProgress}</div></div>}
+                  {!generating&&(<div>
+                    <div style={{marginBottom:"16px"}}>
+                      <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Resumo Estratégico da Recomendação</div>
+                      <textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);setPreviewApproved(false);}} rows={8} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.7,fontSize:"11px"})}/>
+                    </div>
+
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                      <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px"}}>Distribuição do Caixa — R$ {(parseFloat(availableCash)||0).toLocaleString("pt-BR")}</div>
+                      <div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>Total alocado: R$ {Object.keys(allocations).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")}</div>
+                    </div>
+
+                    {Object.keys(allocations).map(function(tk){
+                      var al=allocations[tk];
+                      var cr=(crossrefData||[]).find(function(c){return c.ticker===tk;});
+                      var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24"};
+                      return <div key={tk} style={{background:"#111",borderRadius:"10px",padding:"12px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"6px"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                          <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                            <span style={{fontWeight:800,fontSize:"13px",color:"#f1f5f9"}}>{tk}</span>
+                            <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{cr?cr.name:""}</span>
+                            {cr&&cr._classTag&&<span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"5px",background:"rgba(255,255,255,0.04)",color:"rgba(255,255,255,0.3)"}}>{cr._classTag}</span>}
+                          </div>
+                          <select value={al.verdict||"APORTAR"} onChange={function(e){updateAllocation(tk,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"3px 8px",color:vc[al.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}><option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option></select>
+                        </div>
+                        <div style={{display:"flex",gap:"8px",marginBottom:"8px",alignItems:"center"}}>
+                          <div style={{flex:"0 0 120px"}}><label style={lS}>Valor (R$)</label><input type="number" value={al.value||""} onChange={function(e){updateAllocation(tk,"value",parseInt(e.target.value)||0);}} style={Object.assign({},iS,{fontSize:"13px",fontWeight:700,textAlign:"right"})}/></div>
+                          <div style={{flex:1,fontSize:"10px",color:"rgba(255,255,255,0.3)",lineHeight:1.5}}>
+                            {cr&&cr.deltaCeiling!=null&&<span style={{color:cr.deltaCeiling>0?"#4ade80":"#f87171"}}>{cr.deltaCeiling>0?"+":""}{cr.deltaCeiling}% vs teto</span>}
+                            {cr&&cr.carteiraSuno&&<span style={{marginLeft:"8px"}}>#{cr.carteiraSuno.rank} {cr.carteiraSuno.vies}</span>}
+                          </div>
+                        </div>
+                        <textarea value={al.rationale||""} onChange={function(e){updateAllocation(tk,"rationale",e.target.value);setPreviewApproved(false);}} rows={2} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+                      </div>;
+                    })}
+
+                    <div style={{display:"flex",gap:"8px",marginTop:"14px",flexWrap:"wrap"}}>
+                      <button onClick={function(){setRecStep("select");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Voltar</button>
+                      <button onClick={readjustTexts} disabled={generating} style={Object.assign({},btnBase,{background:"rgba(251,191,36,0.1)",border:"1px solid rgba(251,191,36,0.2)",color:"#fbbf24"})}>{generating?"Reajustando...":"Reajustar com IA"}</button>
+                      <button onClick={function(){setPreviewApproved(true);setRecStep("review");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Aprovar e Revisar →</button>
+                    </div>
+                  </div>)}
+                </div>)}
+
+                {/* STEP 4: Review final */}
                 {recStep==="review"&&(<div>
-                  <div style={{marginBottom:"16px"}}>
-                    <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"6px"}}>Texto Estratégico</div>
-                    {!strategyText&&<button onClick={generateStrategy} disabled={generating} style={Object.assign({},btnBase,{background:generating?"rgba(255,255,255,0.05)":"#DC2626",color:generating?"rgba(255,255,255,0.3)":"#fff",marginBottom:"8px",fontSize:"11px"})}>{generating?"Gerando...":"Gerar Texto Estratégico"}</button>}
-                    {strategyText&&<textarea value={strategyText} onChange={function(e){setStrategyText(e.target.value);}} rows={6} style={Object.assign({},iS,{resize:"vertical",lineHeight:1.6,fontSize:"11px"})}/>}
+                  <div style={{background:"rgba(74,222,128,0.04)",border:"1px solid rgba(74,222,128,0.15)",borderRadius:"10px",padding:"14px",marginBottom:"14px"}}>
+                    <div style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px"}}>Prévia Aprovada ✓</div>
+                    <div style={{fontSize:"11px",color:"rgba(255,255,255,0.5)",lineHeight:1.6}}>{strategyText.slice(0,300)}...</div>
                   </div>
-                  <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Ativos Selecionados ({Object.keys(selectedAssets).length})</div>
-                  {(crossrefData||[]).filter(function(c){return selectedAssets[c.ticker]&&analyses[c.ticker];}).map(function(c){
-                    var an=analyses[c.ticker];var vc={"APORTAR":"#4ade80","MANTER":"#60a5fa","REDUZIR":"#f87171","AGUARDAR":"#fbbf24"};
-                    return <div key={c.ticker} style={{background:"#111",borderRadius:"10px",padding:"12px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"6px"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:"8px"}}><span style={{fontWeight:800,fontSize:"13px",color:"#f1f5f9"}}>{c.ticker}</span><span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{c.name}</span></div>
-                        <select value={an.verdict||"AGUARDAR"} onChange={function(e){updateAnalysis(c.ticker,"verdict",e.target.value);}} style={{background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"6px",padding:"3px 8px",color:vc[an.verdict]||"#fbbf24",fontSize:"10px",fontWeight:700,outline:"none"}}><option value="APORTAR">APORTAR</option><option value="MANTER">MANTER</option><option value="REDUZIR">REDUZIR</option><option value="AGUARDAR">AGUARDAR</option></select>
-                      </div>
-                      <textarea value={an.text||""} onChange={function(e){updateAnalysis(c.ticker,"text",e.target.value);}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+                  <div style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Resumo Final — {Object.keys(allocations).length} ativos · R$ {Object.keys(allocations).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")}</div>
+                  {Object.keys(allocations).map(function(tk){
+                    var al=allocations[tk];
+                    var cr=(crossrefData||[]).find(function(c){return c.ticker===tk;});
+                    return <div key={tk} style={{background:"#111",borderRadius:"8px",padding:"10px 12px",border:"1px solid rgba(255,255,255,0.05)",marginBottom:"4px",display:"flex",gap:"12px",alignItems:"flex-start"}}>
+                      <div style={{minWidth:"50px"}}><div style={{fontWeight:800,fontSize:"12px",color:"#f1f5f9"}}>{tk}</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)"}}>{cr?cr.name:""}</div></div>
+                      <div style={{flex:1,fontSize:"10px",color:"rgba(255,255,255,0.5)",lineHeight:1.5}}>{al.rationale}</div>
+                      <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:"13px",fontWeight:800,color:"#4ade80"}}>R$ {(al.value||0).toLocaleString("pt-BR")}</div><div style={{fontSize:"8px",color:"rgba(255,255,255,0.3)"}}>{al.verdict}</div></div>
                     </div>;
                   })}
                   <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
-                    <button onClick={function(){setRecStep("select");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>←</button>
-                    <button onClick={function(){setRecStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>PDF →</button>
+                    <button onClick={function(){setRecStep("preview");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Ajustar</button>
+                    <button onClick={function(){setRecStep("pdf");}} style={Object.assign({},btnBase,{flex:1,background:"#DC2626",color:"#fff"})}>Gerar PDF →</button>
                   </div>
                 </div>)}
 
-                {/* STEP 4: PDF */}
+                {/* STEP 5: PDF */}
                 {recStep==="pdf"&&(<div style={{textAlign:"center",padding:"20px 0"}}>
-                  <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório pronto</div>
-                  <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {Object.keys(selectedAssets).length} ativos · {period||"Mensal"}</div>
+                  <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Relatório de Recomendações</div>
+                  <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"16px"}}>{editingProfile&&editingProfile.name} · {Object.keys(allocations).length} ativos · R$ {Object.keys(allocations).reduce(function(s,tk){return s+(allocations[tk].value||0);},0).toLocaleString("pt-BR")} · {period||"Mensal"}</div>
                   <button onClick={generatePDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{background:"#DC2626",color:"#fff",padding:"14px 40px",fontSize:"14px",width:"100%",opacity:pdfGenerating?0.6:1})}>{pdfGenerating?"Gerando PDF...":"Gerar e Baixar PDF"}</button>
                   <div style={{marginTop:"10px"}}><button onClick={function(){setRecStep("review");}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>← Revisar</button></div>
                 </div>)}
