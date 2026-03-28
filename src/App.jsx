@@ -1900,10 +1900,13 @@ function ConsultiveReportModal(p) {
       a.appMatch = appMatch ? { thesis: appMatch.thesis, result: appMatch.result, resultPros: (appMatch.resultPros||[]).slice(0,5), resultCons: (appMatch.resultCons||[]).slice(0,5), sunoView: appMatch.sunoView, sentiment: appMatch.sentiment, quarter: appMatch.quarter, rankScore: appMatch.rankScore, portfolio: appMatch._portfolio } : null;
       a.hasAppData = !!appMatch;
       a.carteiraSuno = cartMatch;
-      // Calculate % of portfolio: JB suggested vs current position
-      a.jbPercent = a.suggestedPercent || 0; // from JB suggestedPortfolio
-      var posTotal = posAssets.reduce(function(s,x){return s+(x.totalValue||0);},0);
-      a.posPercent = (posMatch && posTotal > 0) ? (posMatch.totalValue / posTotal * 100) : 0;
+      // Calculate % of portfolio: JB suggested vs current position (from Excel)
+      a.jbPercent = a.suggestedPercent || 0;
+      var excelTotal = posAssets.reduce(function(s,x){return s+(x.totalValue||0);},0);
+      var posMatch2 = null;
+      for (var pj = 0; pj < posAssets.length; pj++) { if (posAssets[pj].ticker === tk) { posMatch2 = posAssets[pj]; break; } }
+      a.posPercent = (posMatch2 && excelTotal > 0) ? (posMatch2.totalValue / excelTotal * 100) : 0;
+      a.posValue = posMatch2 ? posMatch2.totalValue : 0;
       return a;
     });
     result.sort(function(x,y) { var ra = x.carteiraSuno?(x.carteiraSuno.rank||999):999; var rb = y.carteiraSuno?(y.carteiraSuno.rank||999):999; return ra !== rb ? ra - rb : (x.ticker||"").localeCompare(y.ticker||""); });
@@ -2260,40 +2263,63 @@ function ConsultiveReportModal(p) {
                 {recStep==="select"&&crossrefData&&(function(){
                   var cartNames=[];(carteirasData.carteiras||[]).forEach(function(cart){if((carteirasData.ativos[cart.id]||[]).length>0)cartNames.push(cart.name);});
                   
-                  // Build class summary from JB + position
+                  // ── Classify ticker into asset class ──
+                  function classifyTicker(ticker, typeHint, classHint) {
+                    var tk = (ticker||"").toUpperCase();
+                    var tp = (typeHint||"").toLowerCase();
+                    var cl = (classHint||"").toLowerCase();
+                    // Explicit type hints from Excel or JB
+                    if(tp.indexOf("fii")>=0||tp.indexOf("imobili")>=0||cl.indexOf("fii")>=0||cl.indexOf("imobili")>=0) return "FIIs";
+                    if(tp.indexOf("renda fixa")>=0||tp.indexOf("rf")>=0||tp.indexOf("fix")>=0||cl.indexOf("renda")>=0||cl.indexOf("fix")>=0) return "Renda Fixa";
+                    if(tp.indexOf("intern")>=0||cl.indexOf("intern")>=0) return "Internacional";
+                    if(tp.indexOf("alter")>=0||tp.indexOf("multi")>=0||cl.indexOf("alter")>=0) return "Alternativos";
+                    if(tp.indexOf("aço")>=0||tp.indexOf("ação")>=0||cl.indexOf("aço")>=0||cl.indexOf("ação")>=0||cl.indexOf("equit")>=0) return "Ações BR";
+                    // Ticker pattern heuristics (Brazilian market)
+                    if(/^[A-Z]{4}11$/.test(tk)) return "FIIs"; // XPML11, HGLG11
+                    if(/^[A-Z]{4}(3|4|5|6|33|34)$/.test(tk)) return "Ações BR"; // VALE3, PETR4
+                    if(/^[A-Z]{4}11[BF]?$/.test(tk)&&(tp.indexOf("fii")>=0||tk.indexOf("FII")>=0)) return "FIIs";
+                    // International tickers (no numbers, or specific patterns)
+                    if(/^[A-Z]{1,5}$/.test(tk)&&!/\d/.test(tk)) return "Internacional"; // META, GOOG, BKNG
+                    if(cl.indexOf("aç")>=0||cl.indexOf("ações")>=0) return "Ações BR";
+                    return "Ações BR"; // default for unknown
+                  }
+
+                  // ── Build class summary: JB meta vs Excel position ──
+                  var classMap = {"Renda Fixa":{jb:0,pos:0,posValue:0,tickers:[]},"Ações BR":{jb:0,pos:0,posValue:0,tickers:[]},"FIIs":{jb:0,pos:0,posValue:0,tickers:[]},"Internacional":{jb:0,pos:0,posValue:0,tickers:[]},"Alternativos":{jb:0,pos:0,posValue:0,tickers:[]}};
+
+                  // JB meta % from allocationMacro
                   var jbd = editingProfile ? editingProfile.jbData : null;
-                  var classMap = {"Renda Fixa":{jb:0,pos:0,tickers:[]},"Ações BR":{jb:0,pos:0,tickers:[]},"FIIs":{jb:0,pos:0,tickers:[]},"Internacional":{jb:0,pos:0,tickers:[]},"Alternativos":{jb:0,pos:0,tickers:[]}};
                   var allocClasses = jbd && jbd.allocationMacro ? jbd.allocationMacro.classes : [];
                   var allocMap = {"Renda Fixa":"Renda Fixa","Ações":"Ações BR","Acoes":"Ações BR","FIIs":"FIIs","Internacional":"Internacional","Alternativo":"Alternativos","Multimercado":"Alternativos"};
                   allocClasses.forEach(function(ac){ var k = allocMap[ac.name]||ac.name; if(classMap[k]){classMap[k].jb=ac.suggestedPercent||0;} });
-                  // Calc pos totals
+                  // Fallback to profile allocation if JB doesn't have it
+                  var profAlloc = editingProfile ? editingProfile.allocation : null;
+                  if(profAlloc){ Object.keys(profAlloc).forEach(function(k){ if(classMap[k] && profAlloc[k].target && classMap[k].jb === 0) classMap[k].jb = profAlloc[k].target; }); }
+
+                  // Position % from EXCEL posAssets (source of truth)
                   var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
-                  // Map each crossref asset to a class
-                  crossrefData.forEach(function(a){
-                    var cl = a.class||"";
-                    var mapped = "Alternativos";
-                    if(cl.indexOf("Renda")>=0||cl.indexOf("Fix")>=0||cl.indexOf("RF")>=0) mapped="Renda Fixa";
-                    else if(cl.indexOf("Aç")>=0||cl.indexOf("Ações")>=0||cl.indexOf("Equit")>=0) mapped="Ações BR";
-                    else if(cl.indexOf("FII")>=0||cl.indexOf("Imobili")>=0) mapped="FIIs";
-                    else if(cl.indexOf("Intern")>=0) mapped="Internacional";
-                    if(classMap[mapped]) classMap[mapped].tickers.push(a.ticker);
-                    if(a.hasPosition && posTotal > 0 && classMap[mapped]){
-                      classMap[mapped].pos += (a.currentTotalValue / posTotal * 100);
+                  posAssets.forEach(function(pa){
+                    var mapped = classifyTicker(pa.ticker, pa.type, "");
+                    if(classMap[mapped]){
+                      classMap[mapped].posValue += (pa.totalValue||0);
                     }
                   });
-                  // Also use profile allocation if available
-                  var profAlloc = editingProfile ? editingProfile.allocation : null;
-                  if(profAlloc){
-                    Object.keys(profAlloc).forEach(function(k){
-                      if(classMap[k] && profAlloc[k].current) classMap[k].pos = profAlloc[k].current;
-                      if(classMap[k] && profAlloc[k].target && classMap[k].jb === 0) classMap[k].jb = profAlloc[k].target;
-                    });
+                  // Calculate pos % from Excel values
+                  if(posTotal > 0){
+                    Object.keys(classMap).forEach(function(k){ classMap[k].pos = classMap[k].posValue / posTotal * 100; });
                   }
+
+                  // Map crossref assets to classes for ticker list + enrich with classTag
+                  crossrefData.forEach(function(a){
+                    var mapped = classifyTicker(a.ticker, "", a.class);
+                    a._classTag = mapped;
+                    if(classMap[mapped]) classMap[mapped].tickers.push(a.ticker);
+                  });
 
                   var filtered=crossrefData.filter(function(c){
                     if(filterVies!=="all"){var v=c.carteiraSuno?c.carteiraSuno.vies:null;if(v!==filterVies)return false;}
                     if(filterCarteira!=="all"){var ca=c.carteiraSuno?c.carteiraSuno.carteira:null;if(ca!==filterCarteira)return false;}
-                    if(filterClasse!=="all"){var cl=c.class||"";if(filterClasse==="Ações BR"&&cl.indexOf("Aç")<0&&cl.indexOf("Ações")<0)return false;if(filterClasse==="FIIs"&&cl.indexOf("FII")<0&&cl.indexOf("Imobili")<0)return false;if(filterClasse==="Renda Fixa"&&cl.indexOf("Renda")<0&&cl.indexOf("Fix")<0)return false;if(filterClasse==="Internacional"&&cl.indexOf("Intern")<0)return false;}
+                    if(filterClasse!=="all"){if(c._classTag!==filterClasse)return false;}
                     if(filterSentiment!=="all"&&c.appMatch&&c.appMatch.sentiment!==filterSentiment)return false;
                     if(filterRank!=="all"&&c.carteiraSuno){var r=c.carteiraSuno.rank||999;if(filterRank==="top5"&&r>5)return false;if(filterRank==="top10"&&r>10)return false;}
                     if(filterMargem!=="all"&&c.deltaCeiling!=null){if(filterMargem==="desconto"&&c.deltaCeiling<=0)return false;if(filterMargem==="desconto20"&&c.deltaCeiling<=20)return false;}
@@ -2302,7 +2328,8 @@ function ConsultiveReportModal(p) {
                   var selCt=Object.keys(selectedAssets).length;
 
                   return <div>
-                    {/* CLASS DASHBOARD - JB vs Posição */}
+                    {/* CLASS DASHBOARD - JB Meta vs Posição Excel */}
+                    <div style={{marginBottom:"6px",fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Posição atual do Excel{posTotal>0?" · Patrimônio: R$ "+posTotal.toLocaleString("pt-BR",{maximumFractionDigits:0}):""}</div>
                     <div style={{display:"flex",gap:"4px",marginBottom:"12px",flexWrap:"wrap"}}>
                       {Object.keys(classMap).map(function(cls){
                         var cm=classMap[cls]; var diff=cm.jb-cm.pos; var isActive=filterClasse===cls;
@@ -2315,7 +2342,8 @@ function ConsultiveReportModal(p) {
                             <div><div style={{fontSize:"14px",fontWeight:800,color:"#fbbf24"}}>{cm.pos.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.25)"}}>Atual</div></div>
                           </div>
                           <div style={{fontSize:"9px",fontWeight:700,color:diffColor,marginTop:"2px"}}>{diff>0?"+":""}{diff.toFixed(0)}pp {diff>3?"sub-alocado":diff<-3?"sobre-alocado":"ok"}</div>
-                          <div style={{fontSize:"8px",color:"rgba(255,255,255,0.15)",marginTop:"2px"}}>{cm.tickers.length} ativos</div>
+                          {cm.posValue>0&&<div style={{fontSize:"8px",color:"rgba(255,255,255,0.2)",marginTop:"1px"}}>R$ {cm.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0})}</div>}
+                          <div style={{fontSize:"8px",color:"rgba(255,255,255,0.15)",marginTop:"1px"}}>{cm.tickers.length} ativos</div>
                         </div>;
                       })}
                     </div>
@@ -2346,10 +2374,10 @@ function ConsultiveReportModal(p) {
                           <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
                           <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",minWidth:"50px"}}>{c.ticker}</span>
                           <span style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                          {/* JB% vs Pos% */}
-                          <div style={{display:"flex",gap:"2px",alignItems:"center",flexShrink:0}}>
+                          {/* JB% vs Pos% from Excel */}
+                          <div style={{display:"flex",gap:"2px",alignItems:"center",flexShrink:0,minWidth:"90px",justifyContent:"flex-end"}}>
                             {c.jbPercent>0&&<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(96,165,250,0.1)",color:"#60a5fa",fontWeight:600}}>{c.jbPercent.toFixed(1)}%</span>}
-                            {c.jbPercent>0&&c.posPercent>=0&&<span style={{fontSize:"7px",color:"rgba(255,255,255,0.15)"}}>→</span>}
+                            {(c.jbPercent>0||c.posPercent>0)&&<span style={{fontSize:"7px",color:"rgba(255,255,255,0.15)"}}>→</span>}
                             {c.posPercent>0?<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",fontWeight:600}}>{c.posPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",padding:"1px 4px",borderRadius:"4px",background:"rgba(255,255,255,0.03)",color:"rgba(255,255,255,0.2)"}}>—</span>}
                           </div>
                           {c.carteiraSuno&&<span style={{fontSize:"7px",padding:"1px 4px",borderRadius:"5px",background:vC+"18",color:vC,fontWeight:600,flexShrink:0}}>#{c.carteiraSuno.rank} {c.carteiraSuno.vies}</span>}
