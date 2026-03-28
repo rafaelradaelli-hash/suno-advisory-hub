@@ -2004,24 +2004,54 @@ function ConsultiveReportModal(p) {
 
   function buildJourneyContext() {
     var jbd = editingProfile ? editingProfile.jbData : null;
-    if (!jbd) return "";
-    var parts = ["JOURNEY BOOK:"];
-    if (jbd.projections) {
-      var pj = jbd.projections;
-      if (pj.capitalAtRetirement) parts.push("Capital projetado: R$ " + pj.capitalAtRetirement.toLocaleString("pt-BR"));
-      if (pj.percentMeta) parts.push("Meta: " + pj.percentMeta + "%");
+    var parts = [];
+
+    // JB = META ALVO (objetivo)
+    if (jbd) {
+      parts.push("JOURNEY BOOK (META ALVO — onde o cliente DEVERIA estar):");
+      if (jbd.projections) {
+        var pj = jbd.projections;
+        if (pj.capitalAtRetirement) parts.push("Capital projetado: R$ " + pj.capitalAtRetirement.toLocaleString("pt-BR"));
+      }
+      if (jbd.allocationMacro && jbd.allocationMacro.classes) {
+        parts.push("ALOCACAO META:");
+        jbd.allocationMacro.classes.forEach(function(c) {
+          parts.push("  " + c.name + ": meta=" + c.suggestedPercent + "%");
+        });
+      }
     }
-    if (jbd.allocationMacro && jbd.allocationMacro.classes) {
-      parts.push("ALOCACAO:");
-      jbd.allocationMacro.classes.forEach(function(c) {
-        parts.push("  " + c.name + ": " + c.currentPercent + "% → " + c.suggestedPercent + "%");
-      });
-    }
-    if (posAssets.length > 0 || availableCash) {
-      parts.push("POSICAO ATUAL:");
-      if (availableCash) parts.push("Caixa: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
+
+    // POSIÇÃO EXCEL = REALIDADE ATUAL (fonte de verdade)
+    if (posAssets.length > 0) {
+      var posTotal = posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+      parts.push("\nPOSICAO ATUAL DO EXCEL (realidade — fonte de verdade):");
+      parts.push("Patrimonio total em ativos: R$ " + posTotal.toLocaleString("pt-BR"));
+      if (availableCash) parts.push("Caixa disponivel para aportes: R$ " + parseFloat(availableCash).toLocaleString("pt-BR"));
+
+      // Breakdown by class/subclass
+      var classBreak = {};
       posAssets.forEach(function(a) {
-        parts.push("  " + a.ticker + ": Qtd=" + a.qty + ", PM=R$" + (a.avgPrice||0).toFixed(2) + ", Total=R$" + (a.totalValue||0).toLocaleString("pt-BR"));
+        var cls = a.type || "Outros"; // "Renda Fixa", "Renda Variável", "Caixa"
+        var sub = a.subClass || "Outros"; // "Ações", "FIIs", "ETFs", etc
+        var key = cls === "Renda Variável" ? sub : cls; // RF=class, RV=subclass
+        if (!classBreak[key]) classBreak[key] = {value:0, count:0, tickers:[]};
+        classBreak[key].value += (a.totalValue||0);
+        classBreak[key].count++;
+        classBreak[key].tickers.push(a.ticker);
+      });
+      parts.push("COMPOSICAO ATUAL POR CLASSE (do Excel):");
+      Object.keys(classBreak).forEach(function(k) {
+        var cb = classBreak[k];
+        var pct = posTotal > 0 ? (cb.value / posTotal * 100).toFixed(1) : "0";
+        parts.push("  " + k + ": R$ " + cb.value.toLocaleString("pt-BR") + " (" + pct + "%) — " + cb.count + " ativos");
+      });
+
+      // Top holdings
+      var sorted = posAssets.slice().sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);});
+      parts.push("MAIORES POSICOES:");
+      sorted.slice(0, 15).forEach(function(a) {
+        var pct = posTotal > 0 ? ((a.totalValue||0) / posTotal * 100).toFixed(1) : "0";
+        parts.push("  " + a.ticker + " (" + (a.subClass||a.type||"") + "): R$ " + (a.totalValue||0).toLocaleString("pt-BR") + " (" + pct + "%)");
       });
     }
     return parts.join("\n");
@@ -2068,11 +2098,12 @@ function ConsultiveReportModal(p) {
       });
 
       var sys = 'Voce e um consultor senior da Suno Consultoria gerando um RELATORIO DE RECOMENDACOES MENSAL.'
-        + ' Voce recebera: perfil do cliente, Journey Book (alocacoes-alvo), posicao atual (do Excel), momento macro, carteiras Suno, e a lista de ativos selecionados pelo consultor.'
+        + ' Voce recebera: perfil do cliente, Journey Book (METAS de alocacao-alvo), POSICAO ATUAL DO EXCEL (composicao real da carteira hoje com % por classe), momento macro, carteiras Suno, e ativos selecionados.'
+        + ' IMPORTANTE: A POSICAO ATUAL vem do EXCEL importado pelo consultor — esta e a fonte de verdade da carteira real do cliente HOJE. O Journey Book contem as METAS de alocacao que o cliente deveria atingir.'
         + ' O consultor informou R$ ' + cash.toLocaleString("pt-BR") + ' de caixa disponivel para aplicar.'
         + '\n\nGere um JSON com esta estrutura EXATA:'
-        + ' {"strategy":"TEXTO de 3-5 paragrafos comparando posicao atual vs JB, identificando gaps por classe, considerando momento macro e oportunidades. Direto, com numeros concretos. Sem markdown.",'
-        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO (3-4 frases) explicando por que faz sentido aportar nesse ativo nesse momento. Mencione ranking, preco-teto, desconto, resultado recente, aderencia ao JB.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
+        + ' {"strategy":"TEXTO de 3-5 paragrafos: 1) Compare a POSICAO ATUAL DO EXCEL vs as METAS DO JB por classe — onde esta sub/sobre-alocado? Use os percentuais reais do Excel. 2) Considere momento macro. 3) Identifique oportunidades de rebalanceamento. 4) Explique a logica da distribuicao do caixa proposta. Direto, com numeros concretos do Excel. Sem markdown.",'
+        + ' "allocations":[{"ticker":"XXXX","value":NUMERO_EM_REAIS,"percent":PERCENTUAL_DO_CAIXA,"rationale":"1 PARAGRAFO explicando por que aportar nesse ativo agora — mencione como esse aporte ajuda a corrigir gaps vs JB, ranking na carteira Suno, desconto vs preco-teto, resultado recente.","verdict":"APORTAR|MANTER|REDUZIR|AGUARDAR"}]}'
         + '\n\nREGRAS:'
         + ' 1) Distribua os R$ ' + cash.toLocaleString("pt-BR") + ' entre os ativos selecionados de forma inteligente.'
         + ' 2) Priorize: ativos com maior desconto vs preco-teto, melhor ranking na carteira Suno, vies "Comprar", classes sub-alocadas vs JB.'
@@ -2180,14 +2211,14 @@ function ConsultiveReportModal(p) {
       function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
       function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
       var y=0;
-      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO CONSULTIVO MENSAL",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
+      function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO DE RECOMENDAÇÕES",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
       function newPage(){doc.addPage();drawHeader();return 18;}
       function chk(needed){if(y+needed>H-16){y=newPage();return true;}return false;}
       var clientName = editingProfile ? editingProfile.name : "";
       // COVER
       setF(C.accent);doc.rect(0,0,W,1,"F");setF(C.accent);doc.rect(24,40,0.8,100,"F");
       doc.setFontSize(8);doc.setFont("helvetica","bold");setC(C.caption);doc.text("SUNO CONSULTORIA",32,46);
-      doc.setFontSize(34);doc.setFont("helvetica","bold");setC(C.black);doc.text("Relatório",32,64);doc.text("Consultivo",32,80);
+      doc.setFontSize(34);doc.setFont("helvetica","bold");setC(C.black);doc.text("Relatório de",32,64);doc.text("Recomendações",32,80);
       doc.setFontSize(10);doc.setFont("helvetica","normal");setC(C.secondary);doc.text("Recomendação Mensal — Todos os Pilares",32,98);
       if(period.trim()){doc.setFontSize(9);doc.text("Período: "+period.trim(),32,108);}
       if(clientName){doc.setFontSize(7.5);setC(C.secondary);doc.text("ELABORADO PARA",32,170);doc.setFontSize(18);doc.setFont("helvetica","bold");setC(C.title);doc.text(clientName,32,179);}
@@ -2255,8 +2286,8 @@ function ConsultiveReportModal(p) {
         {/* Header */}
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
-            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Consultivo</div>
-            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Estratégia (JB salvo) + Recomendação Mensal</div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Recomendações</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Estratégia (JB) + Relatório de Recomendações</div>
           </div>
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
         </div>
@@ -2734,7 +2765,7 @@ export default function App() {
             <button onClick={function(){setShowClientProfiles(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",cursor:"pointer",background:"rgba(255,255,255,0.02)",color:"rgba(255,255,255,0.45)",fontWeight:600,fontSize:"10px"}} title="Perfis de Clientes">Clientes</button>
             <button onClick={function(){setShowCarteiras(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",cursor:"pointer",background:"rgba(59,130,246,0.04)",color:"#60a5fa",fontWeight:700,fontSize:"10px"}} title="Carteiras Recomendadas Suno">Carteiras</button>
             <button onClick={function(){setShowMacro(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",background:"rgba(251,191,36,0.04)",color:"#fbbf24",fontWeight:700,fontSize:"10px"}} title="Macro & Viés Tático">Macro</button>
-            <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório Consultivo">Consultivo</button>
+            <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório de Recomendações">Recomendações</button>
             <button onClick={function(){setShowReport(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Panorama de Resultados">Panorama</button>
             <button onClick={function(){setShowCfg(!showCfg);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:showCfg?"rgba(255,255,255,0.07)":"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"13px"}} title="Configurações">&#9881;</button>
             <button onClick={function(){setPanel(!panel);}} style={{padding:"8px 18px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"11px"}}>{panel?"Fechar":"+ Adicionar"}</button>
