@@ -966,7 +966,7 @@ function ClientProfilesModal(p) {
   var btnBase = {padding:"7px 14px",borderRadius:"7px",border:"none",cursor:"pointer",fontWeight:700,fontSize:"11px"};
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
       <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(220,38,38,0.15)",width:"100%",maxWidth:editing?"750px":"550px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
@@ -1031,6 +1031,12 @@ function formatBRL(val) {
 function parseBRL(str) {
   return parseInt(String(str).replace(/\D/g, "")) || 0;
 }
+
+function cleanCitations(text) {
+  if (!text) return "";
+  return text.replace(/<cite[^>]*>/g, "").replace(/<\/cite>/g, "").replace(/<[^>]+>/g, "");
+}
+
 
 
 function loadMacroData() {
@@ -1192,14 +1198,14 @@ function MacroModal(p) {
   var biasLabels = {"-2":"Muito Pessimista","-1":"Pessimista","0":"Neutro","1":"Otimista","2":"Muito Otimista"};
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
       <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(251,191,36,0.15)",width:"100%",maxWidth:"900px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
             <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Macro & Viés Tático</div>
             <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Pilar 4 — Visão macroeconômica e alocação tática da Suno</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>✕</button>
         </div>
 
         <div style={{display:"flex",gap:"2px",padding:"10px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
@@ -1520,14 +1526,14 @@ function CarteirasModal(p) {
   var selAtivos = selCart ? getCartAtivos(selCart) : [];
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
       <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(59,130,246,0.15)",width:"100%",maxWidth:"960px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
             <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Carteiras Suno</div>
             <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Recomendações oficiais — Ranking, Preço-teto, Alocação % e Viés</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>✕</button>
         </div>
         <div style={{display:"flex",minHeight:"500px"}}>
           {/* Sidebar */}
@@ -1715,12 +1721,12 @@ function MeetingPrepModal(p) {
         macroPrompt += "} JSON puro.";
 
         var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:macroSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:macroPrompt}]})});
-        if (resp.ok) {
+        if (resp.ok) { try {
           var d = await resp.json(); var raw = "";
           for (var i=0;i<d.content.length;i++){if(d.content[i].text)raw+=d.content[i].text;}
           raw=raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
           var si=raw.indexOf("{");var ei=raw.lastIndexOf("}");
-          if(si>=0&&ei>si){var parsed=JSON.parse(raw.slice(si,ei+1));res.macroShort=parsed.macroShort||null;res.macroDetail=parsed.macroDetail||null;}
+          if(si>=0&&ei>si){var parsed=JSON.parse(raw.slice(si,ei+1));res.macroShort=cleanCitations(parsed.macroShort)||null;res.macroDetail=cleanCitations(parsed.macroDetail)||null;} } catch(macErr){console.error('Macro parse error:',macErr);}
         }
       }
 
@@ -1740,15 +1746,17 @@ function MeetingPrepModal(p) {
               return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart ? {rank:cart.rank, precoTeto:cart.precoTeto, vies:cart.vies} : null};
             });
 
-            var empSys = 'Voce esta preparando um briefing de reuniao. Para cada empresa, use os dados da Suno (resultado, visao) como fonte PRINCIPAL. Complemente com web search APENAS para noticias muito recentes ou relevantes que nao estejam nos dados. Gere JSON: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao Suno, noticias recentes relevantes, ponto de atencao para a reuniao. Neutro e factual."}] JSON puro.';
-            var empResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:empSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:"EMPRESAS:\n"+JSON.stringify(empCtx)}]})});
-            if (empResp.ok) {
-              var ed = await empResp.json(); var eraw = "";
-              for(var ei2=0;ei2<ed.content.length;ei2++){if(ed.content[ei2].text)eraw+=ed.content[ei2].text;}
-              eraw=eraw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-              var esi=eraw.indexOf("[");var eei=eraw.lastIndexOf("]");
-              if(esi>=0&&eei>esi){var eParsed=JSON.parse(eraw.slice(esi,eei+1));eParsed.forEach(function(e){res.empresas[e.ticker]=e;});}
-            }
+            var empSys = 'Para cada empresa, gere um resumo para briefing de reuniao usando os dados fornecidos (resultado trimestral, visao Suno, ranking, preco-teto). Gere JSON puro: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao dos analistas, situacao atual. Neutro e factual. Sem tags HTML."}]';
+            try {
+              var empResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:empSys,messages:[{role:"user",content:"EMPRESAS:\n"+JSON.stringify(empCtx)}]})});
+              if (empResp.ok) {
+                var ed = await empResp.json(); var eraw = "";
+                for(var ei2=0;ei2<ed.content.length;ei2++){if(ed.content[ei2].text)eraw+=ed.content[ei2].text;}
+                eraw=eraw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+                var esi=eraw.indexOf("[");var eei=eraw.lastIndexOf("]");
+                if(esi>=0&&eei>esi){var eParsed=JSON.parse(eraw.slice(esi,eei+1));eParsed.forEach(function(e){e.summary=cleanCitations(e.summary);res.empresas[e.ticker]=e;});}
+              }
+            } catch(empErr) { console.error("Empresas error:", empErr); }
           }
         }
       }
@@ -1761,14 +1769,16 @@ function MeetingPrepModal(p) {
         if (res.macroShort) tpMsg += "\nMacro: " + res.macroShort;
         tpMsg += '\n\nGere JSON: {"talkPoints":"5-7 bullets de pontos de conversa personalizados para este cliente. Inclua: situacao da carteira vs plano, oportunidades, riscos, proximos passos. Cada bullet em uma linha separada com - no inicio."} JSON puro.';
 
-        var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
-        if (tpResp.ok) {
-          var td = await tpResp.json(); var traw = "";
-          for(var ti=0;ti<td.content.length;ti++){if(td.content[ti].text)traw+=td.content[ti].text;}
-          traw=traw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
-          var tsi=traw.indexOf("{");var tei=traw.lastIndexOf("}");
-          if(tsi>=0&&tei>tsi){var tParsed=JSON.parse(traw.slice(tsi,tei+1));res.talkPoints=tParsed.talkPoints||null;}
-        }
+        try {
+          var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
+          if (tpResp.ok) {
+            var td = await tpResp.json(); var traw = "";
+            for(var ti=0;ti<td.content.length;ti++){if(td.content[ti].text)traw+=td.content[ti].text;}
+            traw=traw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+            var tsi=traw.indexOf("{");var tei=traw.lastIndexOf("}");
+            if(tsi>=0&&tei>tsi){var tParsed=JSON.parse(traw.slice(tsi,tei+1));res.talkPoints=cleanCitations(tParsed.talkPoints)||null;}
+          }
+        } catch(tpErr) { console.error("TalkPoints error:", tpErr); }
       }
 
       setResults(res);
@@ -1836,12 +1846,12 @@ function MeetingPrepModal(p) {
   var clientAssets = selectedProfile && selectedProfile.posAssets ? selectedProfile.posAssets.filter(function(a){return a.totalValue > 0;}) : [];
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
       <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(139,92,246,0.15)",width:"100%",maxWidth:"850px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         {/* Header */}
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div><div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Preparo de Reunião</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Monte seu briefing personalizado</div></div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>✕</button>
         </div>
 
         <div style={{padding:"16px 24px 24px"}}>
@@ -2783,15 +2793,15 @@ function ConsultiveReportModal(p) {
 
   // ── RENDER ──
   return (
-    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
-      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(220,38,38,0.15)",width:"100%",maxWidth:"850px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
+    <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:"#0A0A0A",borderRadius:p.inline?"0":"16px",border:p.inline?"none":"1px solid rgba(220,38,38,0.15)",width:"100%",maxWidth:p.inline?"100%":"850px",maxHeight:p.inline?"none":"92vh",overflow:"auto",padding:"0"}}>
         {/* Header */}
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
           <div>
             <div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Recomendações</div>
             <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Estratégia (JB) + Relatório de Recomendações</div>
           </div>
-          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>✕</button>
         </div>
 
         {/* Client selector */}
@@ -3331,199 +3341,163 @@ export default function App() {
   var [tab,setTab]=useState("Dividendos");var [isub,setIsub]=useState("Dollar Income");
   var [search,setSearch]=useState("");var [sf,setSf]=useState("all");
   var [panel,setPanel]=useState(false);var [notif,setNotif]=useState(null);var [hl,setHl]=useState(false);
-  var [showCfg,setShowCfg]=useState(false);
   var [revalLoad,setRevalLoad]=useState(false);var [revalProg,setRevalProg]=useState("");
-  var [showReport,setShowReport]=useState(false);
-  var [showConsultive,setShowConsultive]=useState(false);
-  var [showClientProfiles,setShowClientProfiles]=useState(false);
-  var [showMacro,setShowMacro]=useState(false);
-  var [showCarteiras,setShowCarteiras]=useState(false);
-  var [showMeeting,setShowMeeting]=useState(false);
+
+  // Navigation: pilar + page
+  var [pilar, setPilar] = useState("research"); // research, consultoria, clientes
+  var [page, setPage] = useState("teses"); // sub-pages
+  var [openDropdown, setOpenDropdown] = useState(null);
 
   useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
   useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
 
   function notify(msg,type){setNotif({msg:msg,type:type||"ok"});setTimeout(function(){setNotif(null);},3500);}
+  function nav(p, pg) { setPilar(p); setPage(pg); setOpenDropdown(null); }
 
-  function handleAdd(entry,portfolio){setData(function(prev){var u={};Object.keys(prev).forEach(function(k){u[k]=prev[k].slice();});var l=u[portfolio]||[];var idx=-1;for(var i=0;i<l.length;i++){if(l[i].ticker===entry.ticker){idx=i;break;}}if(idx>=0){l[idx]=mergeStock(l[idx],entry);notify(entry.ticker+" atualizado (consolidação inteligente)!");}else{entry.history=entry.history||[];entry.lastUpdated=new Date().toISOString().slice(0,10);l.push(entry);notify(entry.ticker+" adicionado!");}u[portfolio]=l;return u;});setPanel(false);}
+  function handleAdd(entry,portfolio){setData(function(prev){var u={};Object.keys(prev).forEach(function(k){u[k]=prev[k].slice();});var l=u[portfolio]||[];var idx=-1;for(var i=0;i<l.length;i++){if(l[i].ticker===entry.ticker){idx=i;break;}}if(idx>=0){l[idx]=mergeStock(l[idx],entry);notify(entry.ticker+" atualizado!");}else{entry.history=entry.history||[];entry.lastUpdated=new Date().toISOString().slice(0,10);l.push(entry);notify(entry.ticker+" adicionado!");}u[portfolio]=l;return u;});setPanel(false);}
 
-  function handleDel(ticker){setData(function(prev){var u={};Object.keys(prev).forEach(function(k){u[k]=prev[k].slice();});u[tab]=(u[tab]||[]).filter(function(s){return s.ticker!==ticker;});return u;});notify(ticker+" excluído de "+tab+".");}
+  function handleDel(ticker){setData(function(prev){var u={};Object.keys(prev).forEach(function(k){u[k]=prev[k].slice();});u[tab]=(u[tab]||[]).filter(function(s){return s.ticker!==ticker;});return u;});notify(ticker+" excluído.");}
 
   async function handleReeval() {
-    var portfolio = tab;
-    var list = (data[portfolio] || []).slice();
+    var portfolio = tab; var list = (data[portfolio] || []).slice();
     if (list.length === 0) return;
-    setRevalLoad(true);
-    setRevalProg("Preparando avaliação...");
-
-    var sys = 'Voce e um analista financeiro brasileiro. Recebera uma lista de ativos com seus dados de resultado trimestral. Para CADA ativo, avalie:'
-      + ' 1) rankScore: nota de 1.0 a 10.0 pela QUALIDADE ABSOLUTA do ultimo resultado trimestral. 10=excepcional (recordes, crescimento forte, margens expandindo). 7-9=bom/solido. 5-6=misto/em linha. 3-4=fraco. 1-2=muito ruim (prejuizo, inadimplencia alta, guidance cortado).'
-      + ' 2) highlight: true SOMENTE se o resultado foi SIGNIFICATIVAMENTE surpreendente (muito acima ou muito abaixo do esperado). false se veio em linha.'
-      + ' 3) sentiment: "positive", "neutral" ou "negative" baseado na qualidade geral do resultado.'
-      + ' Responda SOMENTE com JSON puro: [{"ticker":"XXX","rankScore":N.N,"highlight":true/false,"sentiment":"..."},...]';
-
-    var stocksSummary = list.map(function(s) {
-      return {
-        ticker: s.ticker, name: s.name, quarter: s.quarter,
-        result: s.result || "",
-        resultPros: (s.resultPros || []).slice(0, 7),
-        resultCons: (s.resultCons || []).slice(0, 7)
-      };
-    });
-
-    // Split into batches of ~15 to avoid token limits
-    var batchSize = 15;
-    var results = [];
+    setRevalLoad(true); setRevalProg("Preparando...");
+    var sys = 'Voce e um analista financeiro brasileiro. Para CADA ativo, avalie: 1) rankScore: 1.0-10.0. 2) highlight: true/false. 3) sentiment: positive/neutral/negative. JSON puro: [{"ticker":"XXX","rankScore":N.N,"highlight":true/false,"sentiment":"..."},...]';
+    var stocksSummary = list.map(function(s) { return {ticker:s.ticker,name:s.name,quarter:s.quarter,result:s.result||"",resultPros:(s.resultPros||[]).slice(0,7),resultCons:(s.resultCons||[]).slice(0,7)}; });
+    var batchSize = 15; var results = [];
     for (var b = 0; b < stocksSummary.length; b += batchSize) {
       var batch = stocksSummary.slice(b, b + batchSize);
-      var batchNum = Math.floor(b / batchSize) + 1;
-      var totalBatches = Math.ceil(stocksSummary.length / batchSize);
-      setRevalProg("Avaliando lote " + batchNum + "/" + totalBatches + " (" + batch.map(function(s){return s.ticker;}).join(", ") + ")...");
-
+      setRevalProg("Lote " + (Math.floor(b/batchSize)+1) + "...");
       try {
-        var resp = await fetch("/api/anthropic", {
-          method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({
-            model: "claude-sonnet-4-20250514", max_tokens: 2048,
-            system: sys,
-            messages: [{role: "user", content: "Avalie estes ativos:\n" + JSON.stringify(batch, null, 0)}]
-          })
-        });
-        if (!resp.ok) throw new Error("API " + resp.status);
-        var d = await resp.json();
-        var raw = "";
-        for (var ci = 0; ci < d.content.length; ci++) { if (d.content[ci].text) raw += d.content[ci].text; }
-        raw = raw.trim().replace(/```json\s*/g, "").replace(/```\s*/g, "");
-        var si = raw.indexOf("["); var ei = raw.lastIndexOf("]");
-        if (si >= 0 && ei > si) raw = raw.slice(si, ei + 1);
-        var parsed = JSON.parse(raw);
-        results = results.concat(parsed);
-      } catch (err) {
-        console.error("Reeval batch error:", err);
-        setRevalProg("Erro no lote " + batchNum + ": " + err.message);
-        await new Promise(function(r){setTimeout(r, 2000);});
-      }
+        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2048,system:sys,messages:[{role:"user",content:"Avalie:\n"+JSON.stringify(batch)}]})});
+        if (!resp.ok) throw new Error("API "+resp.status);
+        var d = await resp.json(); var raw = "";
+        for (var ci=0;ci<d.content.length;ci++){if(d.content[ci].text)raw+=d.content[ci].text;}
+        raw=raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+        var si=raw.indexOf("[");var ei=raw.lastIndexOf("]");
+        if(si>=0&&ei>si)raw=raw.slice(si,ei+1);
+        results=results.concat(JSON.parse(raw));
+      } catch(err){console.error(err);}
     }
-
-    // Apply results to data
     if (results.length > 0) {
-      setData(function(prev) {
-        var u = {};
-        Object.keys(prev).forEach(function(k) { u[k] = prev[k].slice(); });
-        var pList = u[portfolio] || [];
-        for (var ri = 0; ri < results.length; ri++) {
-          var r = results[ri];
-          for (var pi = 0; pi < pList.length; pi++) {
-            if (pList[pi].ticker === r.ticker) {
-              pList[pi].prevRankScore = pList[pi].rankScore || null;
-              pList[pi].rankScore = typeof r.rankScore === "number" ? r.rankScore : parseFloat(r.rankScore) || 5;
-              pList[pi].highlight = !!r.highlight;
-              if (r.sentiment) pList[pi].sentiment = r.sentiment;
-              pList[pi].lastUpdated = new Date().toISOString().slice(0, 10);
-              break;
-            }
-          }
-        }
-        u[portfolio] = pList;
-        return u;
-      });
-      notify(portfolio + ": " + results.length + " ativos reavaliados e rankeados!");
+      setData(function(prev){var u={};Object.keys(prev).forEach(function(k){u[k]=prev[k].slice();});var pList=u[portfolio]||[];
+        for(var ri=0;ri<results.length;ri++){var r=results[ri];for(var pi=0;pi<pList.length;pi++){if(pList[pi].ticker===r.ticker){pList[pi].prevRankScore=pList[pi].rankScore||null;pList[pi].rankScore=typeof r.rankScore==="number"?r.rankScore:parseFloat(r.rankScore)||5;pList[pi].highlight=!!r.highlight;if(r.sentiment)pList[pi].sentiment=r.sentiment;pList[pi].lastUpdated=new Date().toISOString().slice(0,10);break;}}}
+        u[portfolio]=pList;return u;});
+      notify(results.length+" ativos reavaliados!");
     }
-    setRevalLoad(false);
-    setRevalProg("");
+    setRevalLoad(false);setRevalProg("");
   }
 
   var stocks=(data[tab]||[]).filter(function(s){var mq=!search||s.ticker.toLowerCase().indexOf(search.toLowerCase())>=0||s.name.toLowerCase().indexOf(search.toLowerCase())>=0;var ms=sf==="all"||s.sentiment===sf;var mh=!hl||s.highlight;return mq&&ms&&mh;});
   if(tab==="Internacional"){var subT=INTL_SUBS[isub]||[];stocks=stocks.filter(function(s){return subT.indexOf(s.ticker)>=0||s.intlSub===isub;});}
-  // Sort by rankScore descending and assign rank positions
-  var hasRanks = stocks.some(function(s){return typeof s.rankScore === "number";});
-  if (hasRanks) {
-    stocks = stocks.slice().sort(function(a,b){return (b.rankScore||0)-(a.rankScore||0);});
-  }
-  stocks = stocks.map(function(s,i){var c=Object.assign({},s);if(hasRanks)c._rank=i+1;return c;});
-
+  var hasRanks=stocks.some(function(s){return typeof s.rankScore==="number";});
+  if(hasRanks)stocks=stocks.slice().sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
+  stocks=stocks.map(function(s,i){var c=Object.assign({},s);if(hasRanks)c._rank=i+1;return c;});
   var all=[].concat(data.Dividendos||[],data.Valor||[],data["Small Caps"]||[],data.Internacional||[]);
-  var stats=[{l:"Total",v:all.length,c:"#DC2626"},{l:"Positivos",v:all.filter(function(s){return s.sentiment==="positive";}).length,c:"#4ade80"},{l:"Neutros",v:all.filter(function(s){return s.sentiment==="neutral";}).length,c:"#94a3b8"},{l:"Negativos",v:all.filter(function(s){return s.sentiment==="negative";}).length,c:"#f87171"},{l:"Destaques",v:all.filter(function(s){return s.highlight;}).length,c:"#fbbf24"}];
+  var stats=[{l:"Total",v:all.length,c:"#DC2626"},{l:"Positivos",v:all.filter(function(s){return s.sentiment==="positive";}).length,c:"#4ade80"},{l:"Neutros",v:all.filter(function(s){return s.sentiment==="neutral";}).length,c:"#94a3b8"},{l:"Negativos",v:all.filter(function(s){return s.sentiment==="negative";}).length,c:"#f87171"}];
+
+  // Pillar configs
+  var pillarItems = {
+    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"macro",label:"Macro & Viés"}],
+    consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
+    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"config",label:"Configurações"}]
+  };
+  var pillarColors = {research:"#991b1b",consultoria:"#DC2626",clientes:"#ef4444"};
+  var pillarLabels = {research:"Research",consultoria:"Consultoria",clientes:"Clientes"};
 
   return(
-    <div style={{minHeight:"100vh",background:"#09090b",color:"#e2e8f0",fontFamily:"system-ui,-apple-system,sans-serif"}}>
+    <div style={{minHeight:"100vh",background:"#09090b",color:"#e2e8f0",fontFamily:"system-ui,-apple-system,sans-serif"}} onClick={function(){setOpenDropdown(null);}}>
       {notif&&<div style={{position:"fixed",top:"14px",right:"14px",zIndex:1000,padding:"10px 18px",borderRadius:"8px",background:notif.type==="err"?"#DC2626":"#16a34a",color:"#fff",fontWeight:600,fontSize:"12px",boxShadow:"0 6px 24px rgba(0,0,0,0.5)"}}>{notif.msg}</div>}
-      <div style={{padding:"16px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)",background:"linear-gradient(180deg, rgba(220,38,38,0.03) 0%, transparent 100%)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:"12px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"10px"}}>
-            <div style={{width:"38px",height:"38px",borderRadius:"10px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(220,38,38,0.3)",flexShrink:0}}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
-            <div><h1 style={{margin:0,fontSize:"22px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1><p style={{margin:0,color:"rgba(255,255,255,0.2)",fontSize:"10px",letterSpacing:"0.5px"}}>Central de Consultoria Inteligente</p></div>
+
+      {/* ═══ HEADER ═══ */}
+      <div style={{padding:"12px 24px",borderBottom:"1px solid rgba(255,255,255,0.06)",background:"linear-gradient(180deg, rgba(220,38,38,0.04) 0%, transparent 100%)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer"}} onClick={function(e){e.stopPropagation();nav("research","teses");}}>
+            <div style={{width:"34px",height:"34px",borderRadius:"8px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(220,38,38,0.3)",flexShrink:0}}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
+            <div><h1 style={{margin:0,fontSize:"18px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1></div>
           </div>
-          <div style={{display:"flex",gap:"6px"}}>
-            <button onClick={function(){setShowClientProfiles(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",cursor:"pointer",background:"rgba(255,255,255,0.02)",color:"rgba(255,255,255,0.45)",fontWeight:600,fontSize:"10px"}} title="Perfis de Clientes">Clientes</button>
-            <button onClick={function(){setShowCarteiras(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",cursor:"pointer",background:"rgba(59,130,246,0.04)",color:"#60a5fa",fontWeight:700,fontSize:"10px"}} title="Carteiras Recomendadas Suno">Carteiras</button>
-            <button onClick={function(){setShowMacro(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",background:"rgba(251,191,36,0.04)",color:"#fbbf24",fontWeight:700,fontSize:"10px"}} title="Macro & Viés Tático">Macro</button>
-            <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório de Recomendações">Recomendações</button>
-            <button onClick={function(){setShowMeeting(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(139,92,246,0.25)",cursor:"pointer",background:"rgba(139,92,246,0.06)",color:"#a78bfa",fontWeight:700,fontSize:"10px"}} title="Preparo de Reunião">Reunião</button>
-            <button onClick={function(){setShowReport(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Panorama de Resultados">Panorama</button>
-            <button onClick={function(){setShowCfg(!showCfg);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:showCfg?"rgba(255,255,255,0.07)":"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"13px"}} title="Configurações">&#9881;</button>
-            <button onClick={function(){setPanel(!panel);}} style={{padding:"8px 18px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"11px"}}>{panel?"Fechar":"+ Adicionar"}</button>
+
+          {/* Navigation pillars */}
+          <div style={{display:"flex",gap:"4px"}}>
+            {["research","consultoria","clientes"].map(function(pKey){
+              var isActive = pilar === pKey;
+              var color = pillarColors[pKey];
+              var items = pillarItems[pKey];
+              var isOpen = openDropdown === pKey;
+              return <div key={pKey} style={{position:"relative"}}>
+                <button onClick={function(e){e.stopPropagation();setOpenDropdown(isOpen?null:pKey);}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid "+(isActive?color+"55":"rgba(255,255,255,0.06)"),cursor:"pointer",background:isActive?color+"18":"transparent",color:isActive?color:"rgba(255,255,255,0.4)",fontWeight:700,fontSize:"12px",display:"flex",alignItems:"center",gap:"4px"}}>
+                  {pillarLabels[pKey]}
+                  <span style={{fontSize:"8px",opacity:0.5}}>▾</span>
+                </button>
+                {isOpen&&<div style={{position:"absolute",top:"100%",left:0,marginTop:"4px",background:"#1a1a1a",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"8px",padding:"4px",minWidth:"180px",zIndex:100,boxShadow:"0 8px 30px rgba(0,0,0,0.5)"}}>
+                  {items.map(function(item){
+                    var itemActive = pilar===pKey && page===item.id;
+                    return <button key={item.id} onClick={function(e){e.stopPropagation();nav(pKey,item.id);}} style={{display:"block",width:"100%",textAlign:"left",padding:"8px 12px",borderRadius:"6px",border:"none",cursor:"pointer",background:itemActive?color+"22":"transparent",color:itemActive?color:"rgba(255,255,255,0.6)",fontSize:"11px",fontWeight:itemActive?700:500}}>{item.label}</button>;
+                  })}
+                </div>}
+              </div>;
+            })}
           </div>
         </div>
-        {showCfg&&(<div style={{background:"#111",borderRadius:"10px",padding:"16px",border:"1px solid rgba(255,255,255,0.06)",marginTop:"12px"}}><div style={{fontSize:"9px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1.5px",marginBottom:"8px"}}>Configurações</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><button onClick={function(){if(confirm("Resetar dados?")){try{localStorage.removeItem("tt-v7");}catch(e){}setData(makeData());notify("Dados resetados!");}}} style={{padding:"6px 12px",borderRadius:"6px",border:"1px solid rgba(220,38,38,0.2)",background:"transparent",color:"rgba(220,38,38,0.6)",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>Resetar</button><button onClick={function(){var b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="resumo-teses-backup.json";a.click();}} style={{padding:"6px 12px",borderRadius:"6px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>Exportar JSON</button><label style={{padding:"6px 12px",borderRadius:"6px",border:"1px solid rgba(34,197,94,0.2)",background:"transparent",color:"rgba(34,197,94,0.6)",fontSize:"10px",fontWeight:600,cursor:"pointer"}}>Importar JSON<input type="file" accept=".json" style={{display:"none"}} onChange={function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(d.Dividendos||d.Valor){setData(migrateData(d));notify("Importado e convertido!");}else notify("JSON inválido","err");}catch(er){notify("Erro: "+er.message,"err");}};r.readAsText(f);}}/></label></div></div>)}
-        <div style={{display:"flex",gap:"8px",flexWrap:"wrap",marginTop:"16px"}}>{stats.map(function(s){return <div key={s.l} style={{background:"#111",borderRadius:"10px",padding:"10px 14px",border:"1px solid rgba(255,255,255,0.05)",flex:1,minWidth:"80px",textAlign:"center"}}><div style={{fontSize:"20px",fontWeight:800,color:s.c}}>{s.v}</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",textTransform:"uppercase",letterSpacing:"1px"}}>{s.l}</div></div>;})}</div>
-        {panel&&<AddPanel onAdd={handleAdd} currentData={data}/>}
-        <div style={{display:"flex",gap:"2px",marginTop:"18px"}}>{["Visão Geral","Dividendos","Valor","Small Caps","Internacional"].map(function(t){return <button key={t} onClick={function(){setTab(t);if(t==="Internacional")setIsub("Dollar Income");}} style={{padding:"9px 16px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t?(t==="Visão Geral"?"rgba(139,92,246,0.9)":"#DC2626"):"transparent",color:tab===t?"#fff":"rgba(255,255,255,0.3)"}}>{t}{t!=="Visão Geral"&&<span style={{marginLeft:"5px",fontSize:"10px",padding:"1px 6px",borderRadius:"6px",background:tab===t?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.04)"}}>{(data[t]||[]).length}</span>}</button>;})}</div>
       </div>
-      {tab==="Internacional"&&(<div style={{padding:"0 24px",background:"rgba(220,38,38,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><div style={{display:"flex",gap:"2px",paddingTop:"6px"}}>{["Dollar Income","Hidden Value","Great Companies"].map(function(sub){var cnt=(data.Internacional||[]).filter(function(s){return(INTL_SUBS[sub]||[]).indexOf(s.ticker)>=0||s.intlSub===sub;}).length;return <button key={sub} onClick={function(){setIsub(sub);}} style={{padding:"7px 14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:700,borderRadius:"5px 5px 0 0",background:isub===sub?"rgba(220,38,38,0.12)":"transparent",color:isub===sub?"#DC2626":"rgba(255,255,255,0.25)",borderBottom:isub===sub?"2px solid #DC2626":"2px solid transparent"}}>{sub}<span style={{marginLeft:"4px",fontSize:"9px",padding:"1px 5px",borderRadius:"5px",background:isub===sub?"rgba(220,38,38,0.1)":"rgba(255,255,255,0.03)"}}>{cnt}</span></button>;})}</div></div>)}
-      {tab!=="Visão Geral"&&(<div style={{padding:"12px 24px",display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>&#9733; Destaques</button><button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:revalLoad?"rgba(139,92,246,0.2)":"rgba(139,92,246,0.1)",color:revalLoad?"rgba(139,92,246,0.5)":"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar Carteira"}</button></div>)}
-      {revalProg&&<div style={{padding:"6px 24px"}}><div style={{fontSize:"10px",color:"rgba(139,92,246,0.7)",padding:"6px 10px",background:"rgba(139,92,246,0.05)",borderRadius:"6px",border:"1px solid rgba(139,92,246,0.1)"}}>{revalProg}</div></div>}
-      <div style={{padding:"0 24px 24px"}}>{tab==="Visão Geral"?(<div>
-        {(function(){
-          var ranked = all.filter(function(s){return typeof s.rankScore === "number";}).slice();
-          ranked.sort(function(a,b){return (b.rankScore||0)-(a.rankScore||0);});
-          var top10 = ranked.slice(0,10);
-          var bottom10 = ranked.slice(-10).reverse();
-          // Find portfolio for each stock
-          function findPort(ticker){
-            var ports=["Dividendos","Valor","Small Caps","Internacional"];
-            for(var i=0;i<ports.length;i++){var l=data[ports[i]]||[];for(var j=0;j<l.length;j++){if(l[j].ticker===ticker)return ports[i];}}return"";
-          }
-          var rowS = {display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.04)"};
-          var scCol = function(sc){return sc>=8?"#4ade80":sc>=5?"#fbbf24":"#f87171";};
-          function renderRow(s,i,isTop){
-            var port=findPort(s.ticker);
-            var sc=s.rankScore||0;
-            var delta=(typeof s.prevRankScore==="number")?(sc-s.prevRankScore):null;
-            var showD=delta!==null&&Math.abs(delta)>=1.5;
-            return <div key={s.ticker} style={rowS}>
-              <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
-                <div style={{fontSize:"14px",fontWeight:800,color:isTop?"rgba(74,222,128,0.6)":"rgba(248,113,113,0.6)",width:"28px",textAlign:"center"}}>#{i+1}</div>
-                <div>
-                  <div style={{display:"flex",alignItems:"center",gap:"6px"}}><span style={{fontWeight:700,fontSize:"13px",color:"#f1f5f9"}}>{s.ticker}</span>{s.highlight&&<span style={{color:"#DC2626",fontSize:"12px"}}>&#9733;</span>}<span style={{fontSize:"10px",color:"rgba(255,255,255,0.25)",padding:"1px 6px",borderRadius:"8px",background:"rgba(255,255,255,0.04)"}}>{port}</span></div>
-                  <div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"1px"}}>{s.name} — {s.quarter}</div>
-                </div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
-                {showD&&<div style={{fontSize:"9px",fontWeight:800,color:delta>0?"#4ade80":"#f87171"}}>{delta>0?"▲":"▼"}{Math.abs(delta).toFixed(1)}</div>}
-                <div style={{fontSize:"14px",fontWeight:800,color:scCol(sc),minWidth:"36px",textAlign:"right"}}>{sc.toFixed(1)}</div>
-                <SentimentBadge sentiment={s.sentiment}/>
-              </div>
-            </div>;
-          }
-          return <div>
-            <div style={{background:"#111",borderRadius:"12px",overflow:"hidden",border:"1px solid rgba(74,222,128,0.15)",marginBottom:"12px"}}>
-              <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><span style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1.5px"}}>&#9650; Top 10 — Melhores Resultados</span></div>
-              {top10.map(function(s,i){return renderRow(s,i,true);})}
+
+      {/* ═══ CONTENT ═══ */}
+      <div>
+        {/* RESEARCH > TESES */}
+        {pilar==="research"&&page==="teses"&&(<div>
+          <div style={{padding:"12px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{stats.map(function(s){return <div key={s.l} style={{background:"#111",borderRadius:"10px",padding:"8px 14px",border:"1px solid rgba(255,255,255,0.05)",flex:1,minWidth:"70px",textAlign:"center"}}><div style={{fontSize:"18px",fontWeight:800,color:s.c}}>{s.v}</div><div style={{fontSize:"8px",color:"rgba(255,255,255,0.3)",textTransform:"uppercase"}}>{s.l}</div></div>;})}</div>
+            {panel&&<AddPanel onAdd={handleAdd} currentData={data}/>}
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"12px"}}>
+              <div style={{display:"flex",gap:"2px"}}>{["Visão Geral","Dividendos","Valor","Small Caps","Internacional"].map(function(t){return <button key={t} onClick={function(){setTab(t);if(t==="Internacional")setIsub("Dollar Income");}} style={{padding:"8px 14px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t?(t==="Visão Geral"?"rgba(139,92,246,0.9)":"#DC2626"):"transparent",color:tab===t?"#fff":"rgba(255,255,255,0.3)"}}>{t}{t!=="Visão Geral"&&<span style={{marginLeft:"4px",fontSize:"9px",padding:"1px 5px",borderRadius:"5px",background:tab===t?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.04)"}}>{(data[t]||[]).length}</span>}</button>;})}</div>
+              <button onClick={function(){setPanel(!panel);}} style={{padding:"6px 14px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"10px"}}>{panel?"Fechar":"+ Adicionar"}</button>
             </div>
-            <div style={{background:"#111",borderRadius:"12px",overflow:"hidden",border:"1px solid rgba(248,113,113,0.15)"}}>
-              <div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><span style={{fontSize:"10px",fontWeight:700,color:"#f87171",textTransform:"uppercase",letterSpacing:"1.5px"}}>&#9660; Bottom 10 — Piores Resultados</span></div>
-              {bottom10.map(function(s,i){return renderRow(s,i,false);})}
-            </div>
-          </div>;
-        })()}
-      </div>):(<div>{stocks.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.18)",fontSize:"12px"}}>Nenhum ativo encontrado.</div>}{stocks.map(function(s){return <StockCard key={s.ticker} stock={s} onDelete={handleDel}/>;})}</div>)}</div>
-      {showReport&&<ReportModal data={data} onClose={function(){setShowReport(false);}}/>}
-      {showConsultive&&<ConsultiveReportModal data={data} onClose={function(){setShowConsultive(false);}}/>}
-      {showClientProfiles&&<ClientProfilesModal onClose={function(){setShowClientProfiles(false);}}/>}
-      {showMacro&&<MacroModal onClose={function(){setShowMacro(false);}}/>}
-      {showCarteiras&&<CarteirasModal onClose={function(){setShowCarteiras(false);}}/>}
-      {showMeeting&&<MeetingPrepModal data={data} onClose={function(){setShowMeeting(false);}}/>}
+          </div>
+          {tab==="Internacional"&&(<div style={{padding:"0 24px",background:"rgba(220,38,38,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><div style={{display:"flex",gap:"2px",paddingTop:"6px"}}>{["Dollar Income","Hidden Value","Great Companies"].map(function(sub){var cnt=(data.Internacional||[]).filter(function(s){return(INTL_SUBS[sub]||[]).indexOf(s.ticker)>=0||s.intlSub===sub;}).length;return <button key={sub} onClick={function(){setIsub(sub);}} style={{padding:"7px 14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:700,borderRadius:"5px 5px 0 0",background:isub===sub?"rgba(220,38,38,0.12)":"transparent",color:isub===sub?"#DC2626":"rgba(255,255,255,0.25)",borderBottom:isub===sub?"2px solid #DC2626":"2px solid transparent"}}>{sub}<span style={{marginLeft:"4px",fontSize:"9px"}}>{cnt}</span></button>;})}</div></div>)}
+          {tab!=="Visão Geral"&&(<div style={{padding:"10px 24px",display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>★ Destaques</button><button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar"}</button></div>)}
+          {revalProg&&<div style={{padding:"6px 24px"}}><div style={{fontSize:"10px",color:"#a78bfa",padding:"6px 10px",background:"rgba(139,92,246,0.05)",borderRadius:"6px"}}>{revalProg}</div></div>}
+          <div style={{padding:"0 24px 24px"}}>{tab==="Visão Geral"?(<div>
+            {(function(){
+              var ranked=all.filter(function(s){return typeof s.rankScore==="number";}).slice();ranked.sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
+              var top10=ranked.slice(0,10);var bottom10=ranked.slice(-10).reverse();
+              function findPort(ticker){var ports=["Dividendos","Valor","Small Caps","Internacional"];for(var i=0;i<ports.length;i++){var l=data[ports[i]]||[];for(var j=0;j<l.length;j++){if(l[j].ticker===ticker)return ports[i];}}return"";}
+              var rowS={display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderBottom:"1px solid rgba(255,255,255,0.04)"};
+              var scCol=function(sc){return sc>=8?"#4ade80":sc>=5?"#fbbf24":"#f87171";};
+              function renderRow(s,i,isTop){var port=findPort(s.ticker);var sc=s.rankScore||0;var delta=(typeof s.prevRankScore==="number")?(sc-s.prevRankScore):null;var showD=delta!==null&&Math.abs(delta)>=1.5;
+                return <div key={s.ticker} style={rowS}><div style={{display:"flex",alignItems:"center",gap:"12px"}}><div style={{fontSize:"14px",fontWeight:800,color:isTop?"rgba(74,222,128,0.6)":"rgba(248,113,113,0.6)",width:"28px",textAlign:"center"}}>#{i+1}</div><div><div style={{display:"flex",alignItems:"center",gap:"6px"}}><span style={{fontWeight:700,fontSize:"13px",color:"#f1f5f9"}}>{s.ticker}</span>{s.highlight&&<span style={{color:"#DC2626",fontSize:"12px"}}>★</span>}<span style={{fontSize:"10px",color:"rgba(255,255,255,0.25)",padding:"1px 6px",borderRadius:"8px",background:"rgba(255,255,255,0.04)"}}>{port}</span></div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.35)",marginTop:"1px"}}>{s.name} — {s.quarter}</div></div></div><div style={{display:"flex",alignItems:"center",gap:"6px"}}>{showD&&<div style={{fontSize:"9px",fontWeight:800,color:delta>0?"#4ade80":"#f87171"}}>{delta>0?"▲":"▼"}{Math.abs(delta).toFixed(1)}</div>}<div style={{fontSize:"14px",fontWeight:800,color:scCol(sc),minWidth:"36px",textAlign:"right"}}>{sc.toFixed(1)}</div><SentimentBadge sentiment={s.sentiment}/></div></div>;}
+              return <div>
+                <div style={{background:"#111",borderRadius:"12px",overflow:"hidden",border:"1px solid rgba(74,222,128,0.15)",marginBottom:"12px"}}><div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><span style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1.5px"}}>▲ Top 10</span></div>{top10.map(function(s,i){return renderRow(s,i,true);})}</div>
+                <div style={{background:"#111",borderRadius:"12px",overflow:"hidden",border:"1px solid rgba(248,113,113,0.15)"}}><div style={{padding:"12px 16px",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><span style={{fontSize:"10px",fontWeight:700,color:"#f87171",textTransform:"uppercase",letterSpacing:"1.5px"}}>▼ Bottom 10</span></div>{bottom10.map(function(s,i){return renderRow(s,i,false);})}</div>
+              </div>;
+            })()}
+          </div>):(<div>{stocks.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.18)",fontSize:"12px"}}>Nenhum ativo encontrado.</div>}{stocks.map(function(s){return <StockCard key={s.ticker} stock={s} onDelete={handleDel}/>;})}</div>)}</div>
+        </div>)}
+
+        {/* RESEARCH > CARTEIRAS */}
+        {pilar==="research"&&page==="carteiras"&&<CarteirasModal onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* RESEARCH > MACRO */}
+        {pilar==="research"&&page==="macro"&&<MacroModal onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CONSULTORIA > RECOMENDAÇÕES */}
+        {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CONSULTORIA > REUNIÃO */}
+        {pilar==="consultoria"&&page==="reuniao"&&<MeetingPrepModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CLIENTES > PERFIS */}
+        {pilar==="clientes"&&page==="perfis"&&<ClientProfilesModal onClose={function(){nav("research","teses");}} inline={true}/>}
+
+        {/* CLIENTES > CONFIG */}
+        {pilar==="clientes"&&page==="config"&&(<div style={{padding:"24px"}}>
+          <div style={{fontSize:"16px",fontWeight:800,color:"#fff",marginBottom:"16px"}}>Configurações</div>
+          <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+            <button onClick={function(){if(confirm("Resetar dados?")){try{localStorage.removeItem("tt-v7");}catch(e){}setData(makeData());notify("Dados resetados!");}}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(220,38,38,0.2)",background:"transparent",color:"rgba(220,38,38,0.6)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Resetar Dados</button>
+            <button onClick={function(){var b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="advisory-hub-backup.json";a.click();}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Exportar JSON</button>
+            <label style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(34,197,94,0.2)",background:"transparent",color:"rgba(34,197,94,0.6)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Importar JSON<input type="file" accept=".json" style={{display:"none"}} onChange={function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(d.Dividendos||d.Valor){setData(migrateData(d));notify("Importado!");}else notify("JSON inválido","err");}catch(er){notify("Erro: "+er.message,"err");}};r.readAsText(f);}}/></label>
+          </div>
+        </div>)}
+      </div>
     </div>
   );
 }
