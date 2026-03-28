@@ -1821,88 +1821,102 @@ function MeetingPrepModal(p) {
       return txt;
     }
     function safeParseJSON(raw) {
-      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+      raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"").replace(/```/g,"");
       var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
       if (si >= 0 && ei > si) {
-        try { return JSON.parse(raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]")); } catch(e) {}
+        var chunk = raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+        try { return JSON.parse(chunk); } catch(e) { console.warn("JSON parse attempt 1 failed:", e.message); }
       }
       si = raw.indexOf("["); ei = raw.lastIndexOf("]");
-      if (si >= 0 && ei > si) return JSON.parse(raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]"));
-      throw new Error("No JSON found");
+      if (si >= 0 && ei > si) {
+        var chunk2 = raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+        try { return JSON.parse(chunk2); } catch(e2) { console.warn("JSON parse attempt 2 failed:", e2.message); }
+      }
+      console.error("Failed to parse JSON from:", raw.slice(0, 300));
+      throw new Error("Sem JSON valido na resposta da IA");
     }
     async function callAPI(body) {
+      console.log("API call:", body.model, "system:", (body.system||"").slice(0,80), "msg:", (body.messages[0].content||"").slice(0,80));
       var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      if (!resp.ok) { var et = ""; try{et=await resp.text();}catch(x){} throw new Error("API " + resp.status + ": " + et.slice(0,150)); }
-      var d = await resp.json();
-      if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+      var respText = await resp.text();
+      console.log("API response status:", resp.status, "body:", respText.slice(0, 300));
+      if (!resp.ok) throw new Error("API " + resp.status + ": " + respText.slice(0,200));
+      var d;
+      try { d = JSON.parse(respText); } catch(pe) { throw new Error("Resposta nao e JSON: " + respText.slice(0,200)); }
+      if (d.error) throw new Error("API error: " + (d.error.message || d.error.type || JSON.stringify(d.error)));
+      if (!d.content || !d.content.length) throw new Error("Resposta vazia da IA");
       return d;
     }
 
     var warnings = [];
     try {
       var md = loadMacroData();
-      var macroReports = (md.macroReports || []).slice(0,5);
-      var macroText = macroReports.map(function(r){return "--- " + (r.title||"Relatorio") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,2500);}).join("\n\n");
-      var hasMacroCtx = macroText.trim().length > 50;
-      var profileCtx = "Cliente: " + (selectedProfile.name||"") + ", " + (selectedProfile.age||"") + " anos, " + (selectedProfile.riskProfile||"") + ", horizonte " + (selectedProfile.horizon||"") + " anos. Objetivos: " + (selectedProfile.longTermGoals||"");
+      var macroReports = (md.macroReports || []).slice(0,3);
+      // Keep macro context SHORT to avoid Vercel 10s timeout
+      var macroText = macroReports.map(function(r){return (r.title||"") + ": " + r.text.slice(0,800);}).join("\n");
+      var hasMacroCtx = macroText.trim().length > 30;
+      var profileCtx = (selectedProfile.name||"") + ", " + (selectedProfile.age||"?") + " anos, " + (selectedProfile.riskProfile||"Moderado") + ", horizonte " + (selectedProfile.horizon||"?") + " anos";
       var posCtx = "";
       if (selectedProfile.posAssets) {
-        var posTotal = selectedProfile.posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
-        var topA = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,15);
-        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicoes: " + topA.map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
+        var topA = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,10);
+        if (topA.length > 0) posCtx = ". Top ativos: " + topA.map(function(a){return a.ticker;}).join(", ");
       }
 
+      // ── MACRO ──
       if (wantMacroShort || wantMacroDetail) {
         setGenProgress("Gerando cenario macro...");
         try {
-          var mUserMsg = hasMacroCtx
-            ? "Com base nestes relatorios macro da Suno:\n\n" + macroText.slice(0,8000)
-            : "Nao ha relatorios macro salvos. Gere cenario macro generico do Brasil atual (Selic, inflacao, cambio, bolsa).";
-          var mFields = [];
-          if (wantMacroShort) mFields.push('"macroShort": "3-4 bullets curtos sobre Selic, inflacao, cambio, bolsa"');
-          if (wantMacroDetail) mFields.push('"macroDetail": "3 paragrafos detalhados sobre economia BR, cenario global, perspectivas"');
-          mUserMsg += "\n\nResponda SOMENTE com JSON puro sem markdown:\n{" + mFields.join(", ") + "}";
-          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:4096,system:"Voce e um consultor preparando material macro para reuniao.\n\n" + getToneInstruction(writingTone, false),messages:[{role:"user",content:mUserMsg}]});
+          var mPrompt = hasMacroCtx
+            ? "Contexto macro Suno:\n" + macroText.slice(0,3000) + "\n\n"
+            : "Sem relatorios macro salvos. Use cenario Brasil atual.\n\n";
+          if (wantMacroShort && wantMacroDetail) {
+            mPrompt += 'Gere JSON: {"macroShort":"3-4 bullets curtos (Selic, inflacao, cambio, bolsa)","macroDetail":"3 paragrafos detalhados"} JSON puro.';
+          } else if (wantMacroShort) {
+            mPrompt += 'Gere JSON: {"macroShort":"3-4 bullets curtos sobre Selic, inflacao, cambio, bolsa"} JSON puro.';
+          } else {
+            mPrompt += 'Gere JSON: {"macroDetail":"3 paragrafos detalhados sobre economia BR, global, perspectivas"} JSON puro.';
+          }
+          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Consultor financeiro. " + getToneInstruction(writingTone, true) + ". JSON puro sem markdown.",messages:[{role:"user",content:mPrompt}]});
           var mRaw = extractText(mD.content);
           if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(mP.macroShort)||null; res.macroDetail = cleanCitations(mP.macroDetail)||null; }
-        } catch(me) { console.error("Macro err:", me); warnings.push("macro"); }
+        } catch(me) { console.error("Macro err:", me); warnings.push("macro (" + me.message.slice(0,80) + ")"); }
       }
 
+      // ── EMPRESAS ──
       if (wantEmpresas) {
         var eTickers = Object.keys(selectedEmpresas);
         if (eTickers.length > 0) {
-          for (var eb = 0; eb < eTickers.length; eb += 5) {
-            var eBatch = eTickers.slice(eb, eb + 5);
+          for (var eb = 0; eb < eTickers.length; eb += 4) {
+            var eBatch = eTickers.slice(eb, eb + 4);
             setGenProgress("Analisando " + eBatch.join(", ") + "...");
             var eCtx = eBatch.map(function(tk) {
               var app = allAppStocks.find(function(s){return s.ticker===tk;});
-              var cart = null;
-              (carteirasData.carteiras||[]).forEach(function(ca){(carteirasData.ativos[ca.id]||[]).forEach(function(a){if(a.ticker===tk)cart=a;});});
-              return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart};
+              return {ticker:tk, result: app ? (app.result||"").slice(0,200) : "", sentiment: app ? app.sentiment : "neutral"};
             });
             try {
-              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:"Gere resumo de 1 paragrafo por empresa para briefing. Sem HTML.\n\n" + getToneInstruction(writingTone, false) + "\n\nJSON puro: [{\"ticker\":\"\",\"summary\":\"\"}]",messages:[{role:"user",content:"Empresas:\n"+JSON.stringify(eCtx)}]});
+              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Resumo 1 paragrafo por empresa. " + getToneInstruction(writingTone, true) + '. JSON: [{"ticker":"","summary":""}]',messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
-              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){e.summary=cleanCitations(e.summary||"");res.empresas[e.ticker]=e;}); }
+              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(e.summary||"")};}); }
             } catch(ee) { console.error("Emp err:", ee); warnings.push("empresas"); }
           }
         }
       }
 
+      // ── TALKING POINTS ──
       if (wantTalkPoints) {
         setGenProgress("Gerando talking points...");
         try {
-          var tMsg = profileCtx + "\n" + posCtx + "\nEmpresas: " + Object.keys(res.empresas).join(", ") + "\nFoco: " + (meetingFocus || "trimestral");
-          if (res.macroShort) tMsg += "\nMacro: " + res.macroShort;
-          tMsg += "\n\nGere 5-7 pontos de conversa. JSON puro: {\"talkPoints\":\"- ponto 1\\n- ponto 2\"}";
-          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Gere talking points para reuniao de investimentos.\n\n" + getToneInstruction(writingTone, false),messages:[{role:"user",content:tMsg}]});
+          var tMsg = "Cliente: " + profileCtx + posCtx + "\nFoco: " + (meetingFocus || "trimestral");
+          if (res.macroShort) tMsg += "\nMacro: " + res.macroShort.slice(0,500);
+          tMsg += '\n\nGere 5-7 talking points personalizados. JSON: {"talkPoints":"- ponto 1\n- ponto 2"}';
+          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:1500,system:"Talking points para reuniao. " + getToneInstruction(writingTone, true) + ". JSON puro.",messages:[{role:"user",content:tMsg}]});
           var tRaw = extractText(tD.content);
           if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(tP.talkPoints)||null; }
-        } catch(te) { console.error("TP err:", te); warnings.push("talking points"); }
+        } catch(te) { console.error("TP err:", te); warnings.push("talking points (" + te.message.slice(0,80) + ")"); }
       }
 
       setResults(res);
-      if (warnings.length > 0) setError("Aviso: falha em " + warnings.join(", ") + ". Clique Refazer.");
+      if (warnings.length > 0) setError("Aviso: " + warnings.join("; "));
     } catch(err) { console.error(err); setError("Erro: " + err.message); }
     setGenerating(false); setGenProgress("");
   }
@@ -3559,18 +3573,18 @@ export default function App() {
       <div>
         {/* RESEARCH > TESES */}
         {pilar==="research"&&page==="teses"&&(<div>
-          <div style={{padding:"12px 24px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-            <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>{stats.map(function(s){return <div key={s.l} style={{background:"#111",borderRadius:"10px",padding:"8px 14px",border:"1px solid rgba(255,255,255,0.05)",flex:1,minWidth:"70px",textAlign:"center"}}><div style={{fontSize:"18px",fontWeight:800,color:s.c}}>{s.v}</div><div style={{fontSize:"8px",color:"rgba(255,255,255,0.3)",textTransform:"uppercase"}}>{s.l}</div></div>;})}</div>
+          <div style={{padding:"10px 16px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(60px, 1fr))",gap:"6px"}}>{stats.map(function(s){return <div key={s.l} style={{background:"#111",borderRadius:"10px",padding:"8px 10px",border:"1px solid rgba(255,255,255,0.05)",textAlign:"center"}}><div style={{fontSize:"16px",fontWeight:800,color:s.c}}>{s.v}</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.3)",textTransform:"uppercase"}}>{s.l}</div></div>;})}</div>
             {panel&&<AddPanel onAdd={handleAdd} currentData={data}/>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"12px"}}>
-              <div style={{display:"flex",gap:"2px"}}>{["Visão Geral","Dividendos","Valor","Small Caps","Internacional"].map(function(t){return <button key={t} onClick={function(){setTab(t);if(t==="Internacional")setIsub("Dollar Income");}} style={{padding:"8px 14px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t?(t==="Visão Geral"?"rgba(139,92,246,0.9)":"#DC2626"):"transparent",color:tab===t?"#fff":"rgba(255,255,255,0.3)"}}>{t}{t!=="Visão Geral"&&<span style={{marginLeft:"4px",fontSize:"9px",padding:"1px 5px",borderRadius:"5px",background:tab===t?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.04)"}}>{(data[t]||[]).length}</span>}</button>;})}</div>
+              <div style={{display:"flex",gap:"2px",flexWrap:"wrap"}}>{["Visão Geral","Dividendos","Valor","Small Caps","Internacional"].map(function(t){return <button key={t} onClick={function(){setTab(t);if(t==="Internacional")setIsub("Dollar Income");}} style={{padding:"7px 10px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t?(t==="Visão Geral"?"rgba(139,92,246,0.9)":"#DC2626"):"transparent",color:tab===t?"#fff":"rgba(255,255,255,0.3)",whiteSpace:"nowrap"}}>{t}{t!=="Visão Geral"&&<span style={{marginLeft:"3px",fontSize:"9px",padding:"1px 4px",borderRadius:"5px",background:tab===t?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.04)"}}>{(data[t]||[]).length}</span>}</button>;})}</div>
               <button onClick={function(){setPanel(!panel);}} style={{padding:"6px 14px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"10px"}}>{panel?"Fechar":"+ Adicionar"}</button>
             </div>
           </div>
-          {tab==="Internacional"&&(<div style={{padding:"0 24px",background:"rgba(220,38,38,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><div style={{display:"flex",gap:"2px",paddingTop:"6px"}}>{["Dollar Income","Hidden Value","Great Companies"].map(function(sub){var cnt=(data.Internacional||[]).filter(function(s){return(INTL_SUBS[sub]||[]).indexOf(s.ticker)>=0||s.intlSub===sub;}).length;return <button key={sub} onClick={function(){setIsub(sub);}} style={{padding:"7px 14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:700,borderRadius:"5px 5px 0 0",background:isub===sub?"rgba(220,38,38,0.12)":"transparent",color:isub===sub?"#DC2626":"rgba(255,255,255,0.25)",borderBottom:isub===sub?"2px solid #DC2626":"2px solid transparent"}}>{sub}<span style={{marginLeft:"4px",fontSize:"9px"}}>{cnt}</span></button>;})}</div></div>)}
-          {tab!=="Visão Geral"&&(<div style={{padding:"10px 24px",display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>★ Destaques</button><button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar"}</button></div>)}
+          {tab==="Internacional"&&(<div style={{padding:"0 16px",background:"rgba(220,38,38,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><div style={{display:"flex",gap:"2px",paddingTop:"6px"}}>{["Dollar Income","Hidden Value","Great Companies"].map(function(sub){var cnt=(data.Internacional||[]).filter(function(s){return(INTL_SUBS[sub]||[]).indexOf(s.ticker)>=0||s.intlSub===sub;}).length;return <button key={sub} onClick={function(){setIsub(sub);}} style={{padding:"7px 14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:700,borderRadius:"5px 5px 0 0",background:isub===sub?"rgba(220,38,38,0.12)":"transparent",color:isub===sub?"#DC2626":"rgba(255,255,255,0.25)",borderBottom:isub===sub?"2px solid #DC2626":"2px solid transparent"}}>{sub}<span style={{marginLeft:"4px",fontSize:"9px"}}>{cnt}</span></button>;})}</div></div>)}
+          {tab!=="Visão Geral"&&(<div style={{padding:"8px 16px",display:"flex",gap:"4px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>★ Destaques</button><button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar"}</button></div>)}
           {revalProg&&<div style={{padding:"6px 24px"}}><div style={{fontSize:"10px",color:"#a78bfa",padding:"6px 10px",background:"rgba(139,92,246,0.05)",borderRadius:"6px"}}>{revalProg}</div></div>}
-          <div style={{padding:"0 24px 24px"}}>{tab==="Visão Geral"?(<div>
+          <div style={{padding:"0 16px 24px"}}>{tab==="Visão Geral"?(<div>
             {(function(){
               var ranked=all.filter(function(s){return typeof s.rankScore==="number";}).slice();ranked.sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
               var top10=ranked.slice(0,10);var bottom10=ranked.slice(-10).reverse();
