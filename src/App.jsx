@@ -1644,6 +1644,304 @@ function CarteirasModal(p) {
   );
 }
 
+/* ─── Meeting Prep Module ─── */
+function MeetingPrepModal(p) {
+  var [clientProfiles] = useState(function(){return loadClientProfiles();});
+  var [selectedProfileId, setSelectedProfileId] = useState("");
+  var [selectedProfile, setSelectedProfile] = useState(null);
+  var [meetingDate, setMeetingDate] = useState(new Date().toISOString().slice(0,10));
+  var [meetingFocus, setMeetingFocus] = useState("");
+
+  // Module selections
+  var [wantMacroShort, setWantMacroShort] = useState(true);
+  var [wantMacroDetail, setWantMacroDetail] = useState(false);
+  var [wantEmpresas, setWantEmpresas] = useState(true);
+  var [wantTalkPoints, setWantTalkPoints] = useState(true);
+  var [wantPDF, setWantPDF] = useState(false);
+  var [selectedEmpresas, setSelectedEmpresas] = useState({});
+
+  // Results
+  var [generating, setGenerating] = useState(false);
+  var [genProgress, setGenProgress] = useState("");
+  var [error, setError] = useState("");
+  var [results, setResults] = useState(null); // {macroShort, macroDetail, empresas:{ticker:{text}}, talkPoints}
+  var [pdfGenerating, setPdfGenerating] = useState(false);
+
+  // All app stocks
+  var allAppStocks = [];
+  ["Dividendos","Valor","Small Caps","Internacional"].forEach(function(port) {
+    (p.data[port] || []).forEach(function(s) { allAppStocks.push(Object.assign({_portfolio: port}, s)); });
+  });
+  var carteirasData = loadCarteiras();
+
+  function selectClient(id) {
+    var found = clientProfiles.find(function(pr){return pr.id===id;});
+    setSelectedProfileId(id);
+    setSelectedProfile(found ? Object.assign({}, found) : null);
+    if (found && found.posAssets) {
+      // Pre-select empresas from client position (RV only)
+      var sel = {};
+      found.posAssets.forEach(function(pa) {
+        if (pa.totalValue > 0 && /^[A-Z]{4}(3|4|5|6|11)$/.test(pa.ticker)) sel[pa.ticker] = true;
+      });
+      setSelectedEmpresas(sel);
+    }
+  }
+
+  async function generateAll() {
+    if (!selectedProfile) return;
+    setGenerating(true); setError(""); setGenProgress("Preparando...");
+    var res = {macroShort:null, macroDetail:null, empresas:{}, talkPoints:null};
+
+    try {
+      // Build context
+      var md = loadMacroData();
+      var macroText = (md.macroReports || []).slice(0,5).map(function(r){return "--- " + (r.title||"") + " (" + (r.date||"") + ") ---\n" + r.text.slice(0,3000);}).join("\n\n");
+      var profileCtx = "Cliente: " + (selectedProfile.name||"") + ", " + (selectedProfile.age||"") + " anos, " + (selectedProfile.riskProfile||"") + ", horizonte " + (selectedProfile.horizon||"") + " anos. Objetivos: " + (selectedProfile.longTermGoals||"");
+      var posCtx = "";
+      if (selectedProfile.posAssets) {
+        var posTotal = selectedProfile.posAssets.reduce(function(s,a){return s+(a.totalValue||0);},0);
+        posCtx = "Patrimonio: R$ " + posTotal.toLocaleString("pt-BR") + ". Posicao: " + selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).map(function(a){return a.ticker + " R$" + (a.totalValue||0).toLocaleString("pt-BR");}).join(", ");
+      }
+
+      // ── MACRO (short + detail in one call) ──
+      if (wantMacroShort || wantMacroDetail) {
+        setGenProgress("Gerando cenário macro...");
+        var macroSys = 'Voce e um consultor preparando material para reuniao com cliente. Use os relatorios macro da Suno como fonte PRINCIPAL. Complemente com informacoes recentes via web search apenas se necessario. Tom neutro e profissional.';
+        var macroPrompt = "RELATORIOS MACRO SUNO:\n" + macroText.slice(0,12000) + "\n\nGere JSON: {";
+        if (wantMacroShort) macroPrompt += '"macroShort":"3-4 bullets curtos dos pontos mais relevantes do cenario macro atual (Selic, inflacao, cambio, bolsa). Maximo 4 linhas."';
+        if (wantMacroShort && wantMacroDetail) macroPrompt += ",";
+        if (wantMacroDetail) macroPrompt += '"macroDetail":"3 paragrafos detalhados sobre o cenario macro: economia brasileira, cenario global, perspectivas. Baseado nos relatorios Suno."';
+        macroPrompt += "} JSON puro.";
+
+        var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:macroSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:macroPrompt}]})});
+        if (resp.ok) {
+          var d = await resp.json(); var raw = "";
+          for (var i=0;i<d.content.length;i++){if(d.content[i].text)raw+=d.content[i].text;}
+          raw=raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+          var si=raw.indexOf("{");var ei=raw.lastIndexOf("}");
+          if(si>=0&&ei>si){var parsed=JSON.parse(raw.slice(si,ei+1));res.macroShort=parsed.macroShort||null;res.macroDetail=parsed.macroDetail||null;}
+        }
+      }
+
+      // ── EMPRESAS ──
+      if (wantEmpresas) {
+        var empTickers = Object.keys(selectedEmpresas);
+        if (empTickers.length > 0) {
+          var batchSize = 6;
+          for (var b=0; b<empTickers.length; b+=batchSize) {
+            var batch = empTickers.slice(b, b+batchSize);
+            setGenProgress("Analisando " + batch.join(", ") + "...");
+            
+            var empCtx = batch.map(function(tk) {
+              var app = allAppStocks.find(function(s){return s.ticker===tk;});
+              var cart = null;
+              (carteirasData.carteiras||[]).forEach(function(ca){(carteirasData.ativos[ca.id]||[]).forEach(function(a){if(a.ticker===tk)cart=a;});});
+              return {ticker:tk, appData: app ? {result:(app.result||"").slice(0,300), sunoView:(app.sunoView||"").slice(0,200), sentiment:app.sentiment, rankScore:app.rankScore, quarter:app.quarter} : null, carteira: cart ? {rank:cart.rank, precoTeto:cart.precoTeto, vies:cart.vies} : null};
+            });
+
+            var empSys = 'Voce esta preparando um briefing de reuniao. Para cada empresa, use os dados da Suno (resultado, visao) como fonte PRINCIPAL. Complemente com web search APENAS para noticias muito recentes ou relevantes que nao estejam nos dados. Gere JSON: [{"ticker":"","summary":"1 PARAGRAFO: ultimo resultado, visao Suno, noticias recentes relevantes, ponto de atencao para a reuniao. Neutro e factual."}] JSON puro.';
+            var empResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:3000,system:empSys,tools:[{type:"web_search_20250305",name:"web_search"}],messages:[{role:"user",content:"EMPRESAS:\n"+JSON.stringify(empCtx)}]})});
+            if (empResp.ok) {
+              var ed = await empResp.json(); var eraw = "";
+              for(var ei2=0;ei2<ed.content.length;ei2++){if(ed.content[ei2].text)eraw+=ed.content[ei2].text;}
+              eraw=eraw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+              var esi=eraw.indexOf("[");var eei=eraw.lastIndexOf("]");
+              if(esi>=0&&eei>esi){var eParsed=JSON.parse(eraw.slice(esi,eei+1));eParsed.forEach(function(e){res.empresas[e.ticker]=e;});}
+            }
+          }
+        }
+      }
+
+      // ── TALKING POINTS ──
+      if (wantTalkPoints) {
+        setGenProgress("Gerando talking points...");
+        var tpSys = 'Gere TALKING POINTS para uma reuniao de consultoria de investimentos. Personalize para ESTE cliente. Use dados da Suno. Tom profissional e neutro.';
+        var tpMsg = profileCtx + "\n" + posCtx + "\nEmpresas analisadas: " + Object.keys(res.empresas).join(", ") + "\nFoco da reuniao: " + (meetingFocus || "acompanhamento trimestral");
+        if (res.macroShort) tpMsg += "\nMacro: " + res.macroShort;
+        tpMsg += '\n\nGere JSON: {"talkPoints":"5-7 bullets de pontos de conversa personalizados para este cliente. Inclua: situacao da carteira vs plano, oportunidades, riscos, proximos passos. Cada bullet em uma linha separada com - no inicio."} JSON puro.';
+
+        var tpResp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1500,system:tpSys,messages:[{role:"user",content:tpMsg}]})});
+        if (tpResp.ok) {
+          var td = await tpResp.json(); var traw = "";
+          for(var ti=0;ti<td.content.length;ti++){if(td.content[ti].text)traw+=td.content[ti].text;}
+          traw=traw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"");
+          var tsi=traw.indexOf("{");var tei=traw.lastIndexOf("}");
+          if(tsi>=0&&tei>tsi){var tParsed=JSON.parse(traw.slice(tsi,tei+1));res.talkPoints=tParsed.talkPoints||null;}
+        }
+      }
+
+      setResults(res);
+    } catch(err) { console.error(err); setError("Erro: " + err.message); }
+    setGenerating(false); setGenProgress("");
+  }
+
+  // ── PDF Export ──
+  function generateMeetingPDF() {
+    setPdfGenerating(true);
+    try {
+      var doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
+      var W=210;var H=297;var ML=24;var MR=20;var CW=W-ML-MR;
+      function setC(c){doc.setTextColor(c[0],c[1],c[2]);}
+      function setF(c){doc.setFillColor(c[0],c[1],c[2]);}
+      function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
+      var y=0;
+      function chk(n){if(y+n>H-16){doc.addPage();setF([180,40,40]);doc.rect(0,0,W,0.5,"F");y=18;return true;}return false;}
+
+      // Cover
+      setF([180,40,40]);doc.rect(0,0,W,1,"F");
+      doc.setFontSize(8);doc.setFont("helvetica","bold");setC([140,140,140]);doc.text("SUNO ADVISORY HUB",ML,46);
+      doc.setFontSize(30);setC([30,30,30]);doc.text("Preparo de",ML,68);doc.text("Reunião",ML,82);
+      doc.setFontSize(10);doc.setFont("helvetica","normal");setC([100,100,100]);
+      doc.text((selectedProfile?selectedProfile.name:"") + " — " + meetingDate,ML,98);
+      if(meetingFocus)doc.text("Foco: " + meetingFocus,ML,106);
+      setF([180,40,40]);doc.rect(0,H-1,W,1,"F");
+
+      // Content pages
+      doc.addPage();setF([180,40,40]);doc.rect(0,0,W,0.5,"F");y=18;
+
+      if(results.macroShort){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("CENÁRIO MACRO — RESUMO",ML,y);y+=6;
+        doc.setFontSize(9);doc.setFont("helvetica","normal");setC([50,50,50]);
+        var msl=wrap(results.macroShort,CW,9);msl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});y+=6;}
+
+      if(results.macroDetail){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("CENÁRIO MACRO — DETALHADO",ML,y);y+=6;
+        doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC([50,50,50]);
+        var mdl=wrap(results.macroDetail,CW,8.5);mdl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});y+=8;}
+
+      if(Object.keys(results.empresas).length>0){chk(20);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("EMPRESAS EM FOCO",ML,y);y+=6;
+        Object.keys(results.empresas).forEach(function(tk){
+          var e=results.empresas[tk];chk(25);
+          doc.setFontSize(11);doc.setFont("helvetica","bold");setC([30,30,30]);doc.text(tk,ML,y);y+=5;
+          doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC([50,50,50]);
+          var el=wrap(e.summary||"",CW-4,8.5);el.forEach(function(l){chk(4.5);doc.text(l,ML+2,y);y+=4.5;});y+=6;
+        });}
+
+      if(results.talkPoints){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("TALKING POINTS",ML,y);y+=6;
+        doc.setFontSize(9);doc.setFont("helvetica","normal");setC([50,50,50]);
+        var tpl=wrap(results.talkPoints,CW,9);tpl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});}
+
+      // Page numbers
+      var pc=doc.internal.getNumberOfPages();for(var pg=2;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(6.5);doc.setFont("helvetica","normal");setC([175,175,175]);doc.text((pg-1)+"/"+(pc-1),W/2,H-10,{align:"center"});setF([180,40,40]);doc.rect(0,H-0.5,W,0.5,"F");}
+
+      doc.save("reuniao-"+(selectedProfile?selectedProfile.name.replace(/\s+/g,"-").toLowerCase():"cliente")+"-"+meetingDate+".pdf");
+    } catch(err){console.error(err);alert("Erro PDF: "+err.message);}
+    setPdfGenerating(false);
+  }
+
+  var iS={width:"100%",background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"8px",padding:"8px 10px",color:"#e2e8f0",fontSize:"12px",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  var lS={fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)",marginBottom:"4px",display:"block"};
+  var btnBase={padding:"8px 16px",borderRadius:"8px",border:"none",cursor:"pointer",fontWeight:700,fontSize:"12px"};
+
+  // Client position assets (RV only for empresa selection)
+  var clientAssets = selectedProfile && selectedProfile.posAssets ? selectedProfile.posAssets.filter(function(a){return a.totalValue > 0;}) : [];
+
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+      <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(139,92,246,0.15)",width:"100%",maxWidth:"850px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
+        {/* Header */}
+        <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
+          <div><div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Preparo de Reunião</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Monte seu briefing personalizado</div></div>
+          <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:"pointer"}}>✕</button>
+        </div>
+
+        <div style={{padding:"16px 24px 24px"}}>
+          {error&&<div style={{color:"#f87171",fontSize:"11px",padding:"8px 10px",background:"rgba(220,38,38,0.08)",borderRadius:"6px",marginBottom:"10px"}}>{error}</div>}
+
+          {/* Client + Date + Focus */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"16px"}}>
+            <div><label style={lS}>Cliente</label><select value={selectedProfileId} onChange={function(e){selectClient(e.target.value);}} style={iS}><option value="" style={{background:"#1a1a1a"}}>Selecionar...</option>{clientProfiles.map(function(pr){return <option key={pr.id} value={pr.id} style={{background:"#1a1a1a"}}>{pr.name||"Sem nome"}</option>;})}</select></div>
+            <div><label style={lS}>Data da Reunião</label><input type="date" value={meetingDate} onChange={function(e){setMeetingDate(e.target.value);}} style={iS}/></div>
+            <div><label style={lS}>Foco / Pauta</label><input value={meetingFocus} onChange={function(e){setMeetingFocus(e.target.value);}} placeholder="Ex: trimestral, rebalanceamento" style={iS}/></div>
+          </div>
+
+          {selectedProfile&&(<div>
+            {/* Module selection */}
+            <div style={{fontSize:"10px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"10px"}}>O que preparar?</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"14px"}}>
+              <label style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 12px",borderRadius:"8px",cursor:"pointer",background:wantMacroShort?"rgba(139,92,246,0.08)":"rgba(255,255,255,0.02)",border:wantMacroShort?"1px solid rgba(139,92,246,0.2)":"1px solid rgba(255,255,255,0.06)"}}>
+                <input type="checkbox" checked={wantMacroShort} onChange={function(e){setWantMacroShort(e.target.checked);}} style={{accentColor:"#a78bfa"}}/>
+                <div><div style={{fontSize:"11px",fontWeight:600,color:wantMacroShort?"#a78bfa":"rgba(255,255,255,0.5)"}}>Cenário Macro Resumido</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>3-4 bullets dos pontos-chave</div></div>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 12px",borderRadius:"8px",cursor:"pointer",background:wantMacroDetail?"rgba(139,92,246,0.08)":"rgba(255,255,255,0.02)",border:wantMacroDetail?"1px solid rgba(139,92,246,0.2)":"1px solid rgba(255,255,255,0.06)"}}>
+                <input type="checkbox" checked={wantMacroDetail} onChange={function(e){setWantMacroDetail(e.target.checked);}} style={{accentColor:"#a78bfa"}}/>
+                <div><div style={{fontSize:"11px",fontWeight:600,color:wantMacroDetail?"#a78bfa":"rgba(255,255,255,0.5)"}}>Cenário Macro Detalhado</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>3 parágrafos aprofundados</div></div>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 12px",borderRadius:"8px",cursor:"pointer",background:wantEmpresas?"rgba(139,92,246,0.08)":"rgba(255,255,255,0.02)",border:wantEmpresas?"1px solid rgba(139,92,246,0.2)":"1px solid rgba(255,255,255,0.06)"}}>
+                <input type="checkbox" checked={wantEmpresas} onChange={function(e){setWantEmpresas(e.target.checked);}} style={{accentColor:"#a78bfa"}}/>
+                <div><div style={{fontSize:"11px",fontWeight:600,color:wantEmpresas?"#a78bfa":"rgba(255,255,255,0.5)"}}>Empresas em Foco</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Resumo + notícias por empresa</div></div>
+              </label>
+              <label style={{display:"flex",alignItems:"center",gap:"8px",padding:"10px 12px",borderRadius:"8px",cursor:"pointer",background:wantTalkPoints?"rgba(139,92,246,0.08)":"rgba(255,255,255,0.02)",border:wantTalkPoints?"1px solid rgba(139,92,246,0.2)":"1px solid rgba(255,255,255,0.06)"}}>
+                <input type="checkbox" checked={wantTalkPoints} onChange={function(e){setWantTalkPoints(e.target.checked);}} style={{accentColor:"#a78bfa"}}/>
+                <div><div style={{fontSize:"11px",fontWeight:600,color:wantTalkPoints?"#a78bfa":"rgba(255,255,255,0.5)"}}>Talking Points</div><div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Pontos de conversa personalizados</div></div>
+              </label>
+            </div>
+
+            {/* Empresa selection (if checked) */}
+            {wantEmpresas&&clientAssets.length>0&&(<div style={{marginBottom:"14px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+                <span style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.4)"}}>Selecione empresas ({Object.keys(selectedEmpresas).length})</span>
+                <div style={{display:"flex",gap:"4px"}}>
+                  <button onClick={function(){var sel={};clientAssets.forEach(function(a){if(/^[A-Z]{4}(3|4|5|6|11)$/.test(a.ticker))sel[a.ticker]=true;});setSelectedEmpresas(sel);}} style={{fontSize:"8px",padding:"3px 6px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Todas RV</button>
+                  <button onClick={function(){setSelectedEmpresas({});}} style={{fontSize:"8px",padding:"3px 6px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.3)",cursor:"pointer"}}>Limpar</button>
+                </div>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:"4px",maxHeight:"120px",overflow:"auto"}}>
+                {clientAssets.filter(function(a){return /^[A-Z]{3,6}\d{0,2}$/.test(a.ticker);}).map(function(a){
+                  var isSel=!!selectedEmpresas[a.ticker];
+                  return <button key={a.ticker} onClick={function(){setSelectedEmpresas(function(prev){var n=Object.assign({},prev);if(n[a.ticker])delete n[a.ticker];else n[a.ticker]=true;return n;});}} style={{padding:"4px 8px",borderRadius:"6px",fontSize:"10px",fontWeight:isSel?700:500,background:isSel?"rgba(139,92,246,0.15)":"rgba(255,255,255,0.03)",color:isSel?"#a78bfa":"rgba(255,255,255,0.35)",border:isSel?"1px solid rgba(139,92,246,0.3)":"1px solid rgba(255,255,255,0.06)",cursor:"pointer"}}>{a.ticker}</button>;
+                })}
+              </div>
+            </div>)}
+
+            {/* Generate button */}
+            {!results&&(<button onClick={generateAll} disabled={generating} style={Object.assign({},btnBase,{width:"100%",background:generating?"rgba(139,92,246,0.2)":"#7c3aed",color:"#fff",padding:"12px",fontSize:"13px"})}>
+              {generating?genProgress:"Gerar Briefing"}
+            </button>)}
+
+            {/* Results */}
+            {results&&(<div>
+              <div style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"10px"}}>✓ Briefing Gerado</div>
+
+              {results.macroShort&&(<div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"8px"}}>
+                <div style={{fontSize:"9px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px"}}>Cenário Macro — Resumo</div>
+                <textarea value={results.macroShort} onChange={function(e){setResults(Object.assign({},results,{macroShort:e.target.value}));}} rows={4} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+              </div>)}
+
+              {results.macroDetail&&(<div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"8px"}}>
+                <div style={{fontSize:"9px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px"}}>Cenário Macro — Detalhado</div>
+                <textarea value={results.macroDetail} onChange={function(e){setResults(Object.assign({},results,{macroDetail:e.target.value}));}} rows={8} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+              </div>)}
+
+              {Object.keys(results.empresas).length>0&&(<div style={{marginBottom:"8px"}}>
+                <div style={{fontSize:"9px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px"}}>Empresas em Foco ({Object.keys(results.empresas).length})</div>
+                {Object.keys(results.empresas).map(function(tk){
+                  var e=results.empresas[tk];
+                  return <div key={tk} style={{background:"#111",borderRadius:"8px",padding:"10px 12px",border:"1px solid rgba(255,255,255,0.05)",marginBottom:"4px"}}>
+                    <div style={{fontWeight:800,fontSize:"12px",color:"#f1f5f9",marginBottom:"4px"}}>{tk}</div>
+                    <textarea value={e.summary||""} onChange={function(e2){setResults(function(prev){var n=Object.assign({},prev);n.empresas=Object.assign({},n.empresas);n.empresas[tk]=Object.assign({},n.empresas[tk],{summary:e2.target.value});return n;});}} rows={3} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+                  </div>;
+                })}
+              </div>)}
+
+              {results.talkPoints&&(<div style={{background:"#111",borderRadius:"10px",padding:"14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:"12px"}}>
+                <div style={{fontSize:"9px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"6px"}}>Talking Points</div>
+                <textarea value={results.talkPoints} onChange={function(e){setResults(Object.assign({},results,{talkPoints:e.target.value}));}} rows={6} style={Object.assign({},iS,{resize:"vertical",fontSize:"11px",lineHeight:1.6})}/>
+              </div>)}
+
+              <div style={{display:"flex",gap:"8px"}}>
+                <button onClick={function(){setResults(null);}} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>Refazer</button>
+                <button onClick={generateMeetingPDF} disabled={pdfGenerating} style={Object.assign({},btnBase,{flex:1,background:"#7c3aed",color:"#fff"})}>{pdfGenerating?"Gerando...":"Exportar PDF"}</button>
+              </div>
+            </div>)}
+          </div>)}
+
+          {!selectedProfile&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Selecione um cliente para começar.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Consultive Report Module v3 — 2 Sub-abas (Estratégia + Recomendação) ─── */
 var CONSULT_TAB_STRATEGY = "strategy";
 var CONSULT_TAB_RECOMMEND = "recommend";
@@ -3040,6 +3338,7 @@ export default function App() {
   var [showClientProfiles,setShowClientProfiles]=useState(false);
   var [showMacro,setShowMacro]=useState(false);
   var [showCarteiras,setShowCarteiras]=useState(false);
+  var [showMeeting,setShowMeeting]=useState(false);
 
   useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
   useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
@@ -3160,6 +3459,7 @@ export default function App() {
             <button onClick={function(){setShowCarteiras(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",cursor:"pointer",background:"rgba(59,130,246,0.04)",color:"#60a5fa",fontWeight:700,fontSize:"10px"}} title="Carteiras Recomendadas Suno">Carteiras</button>
             <button onClick={function(){setShowMacro(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.2)",cursor:"pointer",background:"rgba(251,191,36,0.04)",color:"#fbbf24",fontWeight:700,fontSize:"10px"}} title="Macro & Viés Tático">Macro</button>
             <button onClick={function(){setShowConsultive(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(220,38,38,0.25)",cursor:"pointer",background:"rgba(220,38,38,0.06)",color:"#DC2626",fontWeight:700,fontSize:"10px"}} title="Relatório de Recomendações">Recomendações</button>
+            <button onClick={function(){setShowMeeting(true);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(139,92,246,0.25)",cursor:"pointer",background:"rgba(139,92,246,0.06)",color:"#a78bfa",fontWeight:700,fontSize:"10px"}} title="Preparo de Reunião">Reunião</button>
             <button onClick={function(){setShowReport(true);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"11px"}} title="Panorama de Resultados">Panorama</button>
             <button onClick={function(){setShowCfg(!showCfg);}} style={{padding:"8px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",cursor:"pointer",background:showCfg?"rgba(255,255,255,0.07)":"transparent",color:"rgba(255,255,255,0.5)",fontWeight:700,fontSize:"13px"}} title="Configurações">&#9881;</button>
             <button onClick={function(){setPanel(!panel);}} style={{padding:"8px 18px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"11px"}}>{panel?"Fechar":"+ Adicionar"}</button>
@@ -3223,6 +3523,7 @@ export default function App() {
       {showClientProfiles&&<ClientProfilesModal onClose={function(){setShowClientProfiles(false);}}/>}
       {showMacro&&<MacroModal onClose={function(){setShowMacro(false);}}/>}
       {showCarteiras&&<CarteirasModal onClose={function(){setShowCarteiras(false);}}/>}
+      {showMeeting&&<MeetingPrepModal data={data} onClose={function(){setShowMeeting(false);}}/>}
     </div>
   );
 }
