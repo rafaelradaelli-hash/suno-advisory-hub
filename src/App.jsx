@@ -2421,9 +2421,9 @@ function ConsultiveReportModal(p) {
                     {posFileName&&posFile?posFileName:(posAssets.length>0?"Importar nova planilha (substitui a salva)":"Upload Excel da posição (.xlsx)")}
                     <input ref={posFileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handlePosUpload} style={{display:"none"}}/>
                   </label>
-                  {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos carregados</div>}
+                  {posAssets.length>0&&<div style={{fontSize:"10px",color:"#4ade80",marginBottom:"6px"}}>{posAssets.length} ativos carregados{editingProfile&&editingProfile.posImportDate&&!posFile?" (posição de "+editingProfile.posImportDate+")":""}</div>}
                   <div style={{marginBottom:"10px"}}><label style={lS}>Caixa disponível (R$)</label><input value={availableCash} onChange={function(e){setAvailableCash(e.target.value);}} type="number" placeholder="50000" style={iS}/></div>
-                  <button onClick={function(){buildAssetList();}} style={Object.assign({},btnBase,{width:"100%",background:"#DC2626",color:"#fff"})}>Selecionar Ativos →</button>
+                  <button onClick={function(){buildAssetList();}} disabled={posAssets.length===0} style={Object.assign({},btnBase,{width:"100%",background:posAssets.length>0?"#DC2626":"rgba(255,255,255,0.05)",color:posAssets.length>0?"#fff":"rgba(255,255,255,0.3)"})}>{posAssets.length>0?"Selecionar Ativos →":"Importe a posição primeiro"}</button>
                 </div>)}
 
                 {/* STEP 2: Select with filters */}
@@ -2509,7 +2509,13 @@ function ConsultiveReportModal(p) {
 
                   return <div>
                     {/* CLASS DASHBOARD - JB Meta vs Posição Excel */}
-                    <div style={{marginBottom:"6px",fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Posição atual do Excel{posTotal>0?" · Patrimônio: R$ "+posTotal.toLocaleString("pt-BR",{maximumFractionDigits:0}):""}</div>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
+                      <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Posição atual do Excel{posTotal>0?" · Patrimônio: R$ "+posTotal.toLocaleString("pt-BR",{maximumFractionDigits:0}):""}</div>
+                      <div style={{display:"flex",gap:"12px",fontSize:"9px"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#60a5fa"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Meta do Plano (JB)</span></div>
+                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#fbbf24"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Carteira Atual (Excel)</span></div>
+                      </div>
+                    </div>
                     <div style={{display:"flex",gap:"4px",marginBottom:"12px",flexWrap:"wrap"}}>
                       {Object.keys(classMap).map(function(cls){
                         var cm=classMap[cls]; var diff=cm.jb-cm.pos; var isActive=filterClasse===cls;
@@ -2517,9 +2523,9 @@ function ConsultiveReportModal(p) {
                         return <div key={cls} onClick={function(){setFilterClasse(isActive?"all":cls);}} style={{flex:1,minWidth:"100px",padding:"8px 10px",borderRadius:"8px",cursor:"pointer",background:isActive?"rgba(220,38,38,0.1)":"rgba(255,255,255,0.02)",border:isActive?"1px solid rgba(220,38,38,0.3)":"1px solid rgba(255,255,255,0.05)",textAlign:"center"}}>
                           <div style={{fontSize:"9px",fontWeight:700,color:isActive?"#DC2626":"rgba(255,255,255,0.5)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:"4px"}}>{cls}</div>
                           <div style={{display:"flex",justifyContent:"center",gap:"8px",alignItems:"baseline"}}>
-                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#60a5fa"}}>{cm.jb.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.25)"}}>JB Meta</div></div>
+                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#60a5fa"}}>{cm.jb.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(96,165,250,0.5)"}}>Meta</div></div>
                             <div style={{fontSize:"10px",color:"rgba(255,255,255,0.15)"}}>→</div>
-                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#fbbf24"}}>{cm.pos.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(255,255,255,0.25)"}}>Atual</div></div>
+                            <div><div style={{fontSize:"14px",fontWeight:800,color:"#fbbf24"}}>{cm.pos.toFixed(0)}%</div><div style={{fontSize:"7px",color:"rgba(251,191,36,0.5)"}}>Atual</div></div>
                           </div>
                           <div style={{fontSize:"9px",fontWeight:700,color:diffColor,marginTop:"2px"}}>{diff>0?"+":""}{diff.toFixed(0)}pp {diff>3?"sub-alocado":diff<-3?"sobre-alocado":"ok"}</div>
                           {cm.posValue>0&&<div style={{fontSize:"8px",color:"rgba(255,255,255,0.2)",marginTop:"1px"}}>R$ {cm.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0})}</div>}
@@ -2539,7 +2545,8 @@ function ConsultiveReportModal(p) {
 
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
                       <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>{filtered.length} visíveis · {selCt} selecionados</span>
-                      <div style={{display:"flex",gap:"4px"}}>
+                      <div style={{display:"flex",gap:"8px",alignItems:"center"}}>
+                        <span style={{fontSize:"8px",color:"rgba(96,165,250,0.5)"}}>Meta%</span><span style={{fontSize:"7px",color:"rgba(255,255,255,0.1)"}}>→</span><span style={{fontSize:"8px",color:"rgba(251,191,36,0.5)"}}>Atual%</span>
                         <button onClick={function(){var sel={};filtered.forEach(function(c){sel[c.ticker]=true;});setSelectedAssets(function(prev){return Object.assign({},prev,sel);});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Sel. visíveis</button>
                         <button onClick={function(){setSelectedAssets({});}} style={{fontSize:"8px",padding:"3px 8px",borderRadius:"4px",border:"1px solid rgba(220,38,38,0.15)",background:"transparent",color:"rgba(220,38,38,0.4)",cursor:"pointer"}}>Limpar</button>
                       </div>
