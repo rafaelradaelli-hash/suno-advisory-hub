@@ -1,6 +1,55 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
+
+/* ═══ SUPABASE SYNC LAYER ═══ */
+var SUPABASE_URL = "https://zjowgamtmfqzievqnrhg.supabase.co";
+var SUPABASE_KEY = "sb_publishable_L9M6LKA_YuyygIPs_t1oMA_Z-pF2kGz";
+
+var _syncQueue = {};
+var _syncTimer = null;
+
+function supaFetch(table, method, body) {
+  var url = SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main";
+  var headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": "Bearer " + SUPABASE_KEY,
+    "Content-Type": "application/json",
+    "Prefer": method === "GET" ? "" : "return=minimal"
+  };
+  if (method === "GET") {
+    url = SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main&select=*";
+    return fetch(url, {headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY}}).then(function(r){return r.json();});
+  }
+  return fetch(url, {method: "PATCH", headers: headers, body: JSON.stringify(body)});
+}
+
+// Debounced cloud save — batches rapid writes into one call per table
+function syncToCloud(table, payload) {
+  _syncQueue[table] = payload;
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(function() {
+    var queue = Object.assign({}, _syncQueue);
+    _syncQueue = {};
+    Object.keys(queue).forEach(function(t) {
+      supaFetch(t, "PATCH", queue[t]).then(function() {
+        console.log("[sync] saved " + t);
+      }).catch(function(err) {
+        console.error("[sync] error saving " + t + ":", err);
+      });
+    });
+  }, 1500);
+}
+
+// Load from cloud (returns null if no data or error)
+async function loadFromCloud(table, field) {
+  try {
+    var rows = await supaFetch(table, "GET");
+    if (rows && rows.length > 0 && rows[0][field]) return rows[0][field];
+  } catch(err) { console.error("[sync] error loading " + table + ":", err); }
+  return null;
+}
+/* ═══ END SUPABASE SYNC ═══ */
 
 var INTL_SUBS = {
   "Dollar Income": ["VNOM","HPQ","EWBC","ALLY","BTI"],
@@ -998,6 +1047,7 @@ function loadClientProfiles() {
 
 function saveClientProfiles(profiles) {
   try { localStorage.setItem("tt-clients", JSON.stringify(profiles)); } catch(e) {}
+  syncToCloud("client_profiles", {profiles: profiles, updated_at: new Date().toISOString()});
 }
 
 function ClientProfileEditor(p) {
@@ -1241,7 +1291,10 @@ function loadMacroData() {
   try { var s = localStorage.getItem("tt-macro"); if (s) return JSON.parse(s); } catch(e) {}
   return { macroReports:[], biasViews:{}, allocationTable:{} };
 }
-function saveMacroData(d) { try { localStorage.setItem("tt-macro", JSON.stringify(d)); } catch(e) {} }
+function saveMacroData(d) {
+  try { localStorage.setItem("tt-macro", JSON.stringify(d)); } catch(e) {}
+  syncToCloud("macro_data", {data: d, updated_at: new Date().toISOString()});
+}
 
 function MacroModal(p) {
   var [macroData, setMacroData] = useState(function(){
@@ -1561,7 +1614,10 @@ function loadCarteiras() {
   try { var s = localStorage.getItem("tt-carteiras-suno"); if (s) return JSON.parse(s); } catch(e) {}
   return { carteiras: DEFAULT_CARTEIRAS, ativos: {} };
 }
-function saveCarteiras(d) { try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(d)); } catch(e) {} }
+function saveCarteiras(d) {
+  try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(d)); } catch(e) {}
+  syncToCloud("carteiras_data", {data: d, updated_at: new Date().toISOString()});
+}
 
 function CarteirasModal(p) {
   var [cData, setCData] = useState(function(){ return loadCarteiras(); });
@@ -3561,8 +3617,53 @@ export default function App() {
   var [page, setPage] = useState("teses"); // sub-pages
   var [openDropdown, setOpenDropdown] = useState(null);
 
-  useEffect(function(){try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}},[]);
-  useEffect(function(){try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}},[data]);
+  var [syncStatus, setSyncStatus] = useState("idle"); // idle, syncing, synced, error
+
+  // Load: localStorage first (instant), then cloud (async override if newer)
+  useEffect(function(){
+    // 1. Local load (instant)
+    try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}
+    // 2. Cloud load (async — overrides local if cloud has data)
+    setSyncStatus("syncing");
+    loadFromCloud("app_data", "data").then(function(cloudData) {
+      if (cloudData && Object.keys(cloudData).length > 0 && (cloudData.Dividendos || cloudData.Valor)) {
+        setData(migrateData(cloudData));
+        try { localStorage.setItem("tt-v7", JSON.stringify(cloudData)); } catch(e) {}
+        console.log("[sync] loaded app_data from cloud");
+      }
+      setSyncStatus("synced");
+    }).catch(function(err) { console.error("[sync] cloud load error:", err); setSyncStatus("error"); });
+
+    // Also sync clients, macro, carteiras from cloud
+    loadFromCloud("client_profiles", "profiles").then(function(cp) {
+      if (cp && Array.isArray(cp) && cp.length > 0) {
+        try { localStorage.setItem("tt-clients", JSON.stringify(cp)); } catch(e) {}
+        console.log("[sync] loaded client_profiles from cloud (" + cp.length + " profiles)");
+      }
+    }).catch(function(){});
+    loadFromCloud("macro_data", "data").then(function(md) {
+      if (md && Object.keys(md).length > 0) {
+        try { localStorage.setItem("tt-macro", JSON.stringify(md)); } catch(e) {}
+        console.log("[sync] loaded macro_data from cloud");
+      }
+    }).catch(function(){});
+    loadFromCloud("carteiras_data", "data").then(function(cd) {
+      if (cd && Object.keys(cd).length > 0) {
+        try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(cd)); } catch(e) {}
+        console.log("[sync] loaded carteiras_data from cloud");
+      }
+    }).catch(function(){});
+  },[]);
+
+  // Save: localStorage + cloud (debounced)
+  useEffect(function(){
+    try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}
+    // Only sync to cloud if data has actual content (not empty default)
+    var hasContent = (data.Dividendos && data.Dividendos.length > 0) || (data.Valor && data.Valor.length > 0) || (data["Small Caps"] && data["Small Caps"].length > 0) || (data.Internacional && data.Internacional.length > 0);
+    if (hasContent) {
+      syncToCloud("app_data", {data: data, updated_at: new Date().toISOString()});
+    }
+  },[data]);
 
   function notify(msg,type){setNotif({msg:msg,type:type||"ok"});setTimeout(function(){setNotif(null);},3500);}
   function nav(p, pg) { setPilar(p); setPage(pg); setOpenDropdown(null); }
@@ -3627,7 +3728,7 @@ export default function App() {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}}>
           <div style={{display:"flex",alignItems:"center",gap:"10px",cursor:"pointer",flexShrink:0}} onClick={function(e){e.stopPropagation();nav("research","teses");}}>
             <div style={{width:"32px",height:"32px",borderRadius:"8px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 8px rgba(220,38,38,0.3)",flexShrink:0}}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></div>
-            <div><h1 style={{margin:0,fontSize:"16px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1></div>
+            <div style={{display:"flex",alignItems:"center",gap:"6px"}}><h1 style={{margin:0,fontSize:"16px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1>{syncStatus==="syncing"&&<span style={{fontSize:"7px",padding:"2px 6px",borderRadius:"8px",background:"rgba(251,191,36,0.1)",color:"#fbbf24",fontWeight:600}}>sincronizando...</span>}{syncStatus==="synced"&&<span style={{fontSize:"7px",padding:"2px 6px",borderRadius:"8px",background:"rgba(74,222,128,0.1)",color:"#4ade80",fontWeight:600}}>☁ sync</span>}{syncStatus==="error"&&<span style={{fontSize:"7px",padding:"2px 6px",borderRadius:"8px",background:"rgba(248,113,113,0.1)",color:"#f87171",fontWeight:600}}>offline</span>}</div>
           </div>
 
           {/* Navigation pillars */}
