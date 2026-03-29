@@ -3323,10 +3323,10 @@ function ConsultiveReportModal(p) {
                   return <div>
                     {/* Legend */}
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                      <span style={{fontSize:"10px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>{selCt} selecionados</span>
+                      <span style={{fontSize:"10px",fontWeight:700,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px"}}>COMPRAS ({selCt} selecionados)</span>
                       <div style={{display:"flex",gap:"12px",fontSize:"9px"}}>
-                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#60a5fa"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Meta (JB)</span></div>
                         <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#fbbf24"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Atual (Excel)</span></div>
+                        <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"8px",height:"8px",borderRadius:"2px",background:"#60a5fa"}}></div><span style={{color:"rgba(255,255,255,0.4)"}}>Meta (JB)</span></div>
                       </div>
                     </div>
 
@@ -3352,10 +3352,9 @@ function ConsultiveReportModal(p) {
                         <span style={{width:"20px",flexShrink:0}}></span>
                         <span style={{width:"52px",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>TICKER</span>
                         <span style={{flex:1,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>EMPRESA</span>
-                        <span style={{width:"72px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>META → ATUAL</span>
-                        <span style={{width:"28px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>RANK</span>
-                        <span style={{width:"22px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>NOTA</span>
-                        <span style={{width:"32px",textAlign:"right",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>DESC.</span>
+                        <span style={{width:"80px",textAlign:"center",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>ATUAL → META</span>
+                        <span style={{width:"20px",flexShrink:0}}></span>
+                        <span style={{width:"80px",textAlign:"right",flexShrink:0,fontSize:"7px",color:"rgba(255,255,255,0.3)",fontWeight:600}}>FINANCEIRO</span>
                       </div>
                       {BIAS_CLASSES.map(function(group){
                         var groupAssets = group.items.reduce(function(s,item){return s.concat(subclassData[item].assets);}, []);
@@ -3369,13 +3368,14 @@ function ConsultiveReportModal(p) {
                         return <div key={group.group}>
                           {/* Group header */}
                           <div style={{padding:"8px 10px",background:"rgba(220,38,38,0.06)",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                            <span style={{fontSize:"11px",fontWeight:800,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px"}}>{group.group}</span>
+                            <span style={{fontSize:"11px",fontWeight:800,color:"#4ade80",textTransform:"uppercase",letterSpacing:"1px"}}>{group.group}</span>
                             <div style={{display:"flex",gap:"10px",alignItems:"center",fontSize:"10px"}}>
-                              <span style={{color:"#60a5fa",fontWeight:700}}>{groupJb.toFixed(0)}%</span>
-                              <span style={{color:"rgba(255,255,255,0.15)"}}>→</span>
                               <span style={{color:"#fbbf24",fontWeight:700}}>{groupPos.toFixed(0)}%</span>
-                              {groupVal>0&&<span style={{color:"rgba(255,255,255,0.3)",fontSize:"9px"}}>R$ {groupVal.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
+                              <span style={{color:"rgba(255,255,255,0.15)"}}>→</span>
+                              <span style={{color:"#60a5fa",fontWeight:700}}>{groupJb.toFixed(0)}%</span>
                               <span style={{color:diffColor,fontWeight:700,fontSize:"9px"}}>{groupDiff>0?"+":""}{groupDiff.toFixed(0)}pp</span>
+                              <span style={{width:"20px",flexShrink:0}}></span>
+                              {groupVal>0&&<span style={{color:"rgba(255,255,255,0.3)",fontSize:"9px"}}>R$ {groupVal.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
                             </div>
                           </div>
 
@@ -3392,9 +3392,9 @@ function ConsultiveReportModal(p) {
                               <div style={{padding:"5px 10px 5px 20px",background:"rgba(255,255,255,0.02)",borderBottom:"1px solid rgba(255,255,255,0.03)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                                 <span style={{fontSize:"10px",fontWeight:600,color:"rgba(255,255,255,0.5)"}}>{item}</span>
                                 <div style={{display:"flex",gap:"8px",alignItems:"center",fontSize:"9px"}}>
-                                  <span style={{color:"rgba(96,165,250,0.7)"}}>{sd.jb.toFixed(0)}%</span>
-                                  <span style={{color:"rgba(255,255,255,0.1)"}}>→</span>
                                   <span style={{color:"rgba(251,191,36,0.7)"}}>{sd.pos.toFixed(0)}%</span>
+                                  <span style={{color:"rgba(255,255,255,0.1)"}}>→</span>
+                                  <span style={{color:"rgba(96,165,250,0.7)"}}>{sd.jb.toFixed(0)}%</span>
                                   {sd.posValue>0&&<span style={{color:"rgba(255,255,255,0.2)"}}>R$ {sd.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0})}</span>}
                                   <span style={{color:idColor,fontSize:"8px"}}>{itemDiff>0?"+":""}{itemDiff.toFixed(0)}pp</span>
                                   <span style={{color:"rgba(255,255,255,0.15)"}}>{itemAssets.length} ativos</span>
@@ -3409,14 +3409,13 @@ function ConsultiveReportModal(p) {
                                   <input type="checkbox" checked={isSel} onChange={function(){setSelectedAssets(function(prev){var n=Object.assign({},prev);if(n[c.ticker])delete n[c.ticker];else n[c.ticker]=true;return n;});}} style={{accentColor:"#DC2626",flexShrink:0}}/>
                                   <span style={{fontWeight:700,fontSize:"11px",color:isSel?"#DC2626":"#f1f5f9",width:"52px",flexShrink:0}}>{c.ticker}</span>
                                   <span style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.name}</span>
-                                  <div style={{display:"flex",gap:"2px",alignItems:"center",width:"72px",justifyContent:"center",flexShrink:0}}>
-                                    {c.jbPercent>0?<span style={{fontSize:"8px",padding:"1px 3px",borderRadius:"3px",background:"rgba(96,165,250,0.1)",color:"#60a5fa"}}>{c.jbPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",color:"rgba(255,255,255,0.08)"}}>—</span>}
-                                    <span style={{fontSize:"6px",color:"rgba(255,255,255,0.1)"}}>→</span>
+                                  <div style={{display:"flex",gap:"2px",alignItems:"center",width:"80px",justifyContent:"center",flexShrink:0}}>
                                     {c.posPercent>0?<span style={{fontSize:"8px",padding:"1px 3px",borderRadius:"3px",background:"rgba(251,191,36,0.1)",color:"#fbbf24"}}>{c.posPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",color:"rgba(255,255,255,0.08)"}}>—</span>}
+                                    <span style={{fontSize:"6px",color:"rgba(255,255,255,0.1)"}}>→</span>
+                                    {c.jbPercent>0?<span style={{fontSize:"8px",padding:"1px 3px",borderRadius:"3px",background:"rgba(96,165,250,0.1)",color:"#60a5fa"}}>{c.jbPercent.toFixed(1)}%</span>:<span style={{fontSize:"8px",color:"rgba(255,255,255,0.08)"}}>—</span>}
                                   </div>
-                                  <span style={{width:"28px",textAlign:"center",flexShrink:0,fontSize:"7px",padding:"1px 0",borderRadius:"4px",background:c.carteiraSuno?(vC+"18"):"transparent",color:c.carteiraSuno?vC:"transparent",fontWeight:600}}>{c.carteiraSuno?("#"+c.carteiraSuno.rank):""}</span>
-                                  <span style={{width:"22px",textAlign:"center",flexShrink:0,fontSize:"7px",color:c.appMatch?(c.appMatch.sentiment==="positive"?"#4ade80":c.appMatch.sentiment==="negative"?"#f87171":"#94a3b8"):"transparent"}}>{c.appMatch&&c.appMatch.rankScore?c.appMatch.rankScore.toFixed(1):""}</span>
-                                  <span style={{width:"32px",textAlign:"right",flexShrink:0,fontSize:"7px",color:c.deltaCeiling!=null?(c.deltaCeiling>0?"#4ade80":"#f87171"):"transparent",fontWeight:600}}>{c.deltaCeiling!=null?((c.deltaCeiling>0?"+":"")+c.deltaCeiling+"%"):""}</span>
+                                  <span style={{width:"20px",flexShrink:0}}></span>
+                                  <span style={{width:"80px",textAlign:"right",flexShrink:0,fontSize:"8px",color:"rgba(255,255,255,0.3)"}}>{c.posValue>0?"R$ "+c.posValue.toLocaleString("pt-BR",{maximumFractionDigits:0}):""}</span>
                                 </div>;
                               })}
                             </div>;
