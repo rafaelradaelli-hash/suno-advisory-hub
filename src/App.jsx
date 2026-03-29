@@ -178,14 +178,44 @@ var TONE_OPTIONS = [
   {key:"profissional",label:"Profissional",desc:"Técnico"}
 ];
 var TONE_MAP = {
-  "simples":"REGRA DE TOM: Escreva como se estivesse explicando para alguem da sua familia que NUNCA investiu. PROIBIDO usar qualquer termo tecnico (P/L, yield, EBITDA, margem, spread, duration, fluxo de caixa, alavancagem, etc). Se precisar mencionar um conceito, explique com palavras do dia-a-dia. Use frases CURTAS (maximo 15 palavras). Use comparacoes simples (ex: 'a empresa lucrou mais do que o esperado' em vez de 'superou o consenso de mercado'). Tom de CONVERSA INFORMAL entre amigos. Evite numeros demais — prefira 'subiu bastante' a '12,3% acima do guidance'. Quando mencionar valores grandes, contextualize (ex: 'lucrou R$200 milhoes, quase o dobro do ano passado').",
-  "intermediario":"REGRA DE TOM: O cliente entende o basico de investimentos (sabe o que e acao, fundo, renda fixa, dividendo) mas NAO domina termos avancados. Pode usar: lucro, receita, dividendo, rentabilidade, CDI, Selic, inflacao, valorizacao. EVITE ou EXPLIQUE brevemente: EBITDA (diga 'lucro operacional'), yield (diga 'retorno em dividendos'), spread, duration, P/L (diga 'preco sobre lucro'). Use paragrafos de 2-3 frases. Inclua numeros importantes mas sem exagerar. Tom profissional mas acessivel — como um consultor explicando para um cliente com 2-3 anos de experiencia.",
-  "profissional":"REGRA DE TOM: Linguagem TECNICA completa de mercado financeiro. Use livremente: P/L, P/VP, EV/EBITDA, yield, spread, duration, beta, Sharpe, fluxo de caixa descontado, margem liquida, ROE, ROIC, alavancagem, guidance, consenso, upside, downside, re-rating, de-rating, carry, NTN-B, DI futuro, premio de risco, multiplos, peer comparison. Inclua TODOS os numeros relevantes com precisao (percentuais com 1 casa decimal). Analise deve ser densa, com comparativos vs peers e benchmarks. Tom de relatorio de research institucional. Paragrafos podem ser mais longos e detalhados."
+  "simples":"REGRA DE TOM — SIMPLES (para quem nunca investiu):"
+    + "\n- Escreva como se explicasse para um familiar que nao entende nada de investimentos."
+    + "\n- PROIBIDO usar termos tecnicos: P/L, EBITDA, yield, spread, duration, ROE, ROIC, multiplos, guidance, consenso, alavancagem, fluxo de caixa descontado, margem bruta, margem liquida, margem EBITDA."
+    + "\n- Use ANALOGIAS do dia-a-dia para explicar conceitos. Exemplos:"
+    + "\n  * Em vez de 'margem bruta de 45%': 'de cada R$100 que a empresa fatura, R$45 sobram depois de pagar os custos de producao'"
+    + "\n  * Em vez de 'margem liquida de 18%': 'no final das contas, depois de pagar tudo (impostos, salarios, juros), a empresa fica com R$18 de lucro a cada R$100 de receita'"
+    + "\n  * Em vez de 'EBITDA cresceu 12%': 'o lucro das operacoes do dia-a-dia cresceu 12%'"
+    + "\n  * Em vez de 'P/L de 8x': 'pelo preco atual, voce recuperaria o investimento em cerca de 8 anos so com o lucro da empresa'"
+    + "\n  * Em vez de 'yield de 7%': 'a empresa distribui cerca de R$7 por ano para cada R$100 investidos'"
+    + "\n  * Em vez de 'alavancagem de 2x': 'a empresa deve o dobro do que gera de lucro por ano — precisa de 2 anos de lucro so para quitar as dividas'"
+    + "\n- CUIDADO: nao use a mesma analogia para conceitos diferentes. Margem bruta e margem liquida sao coisas distintas — diferencie claramente."
+    + "\n- Frases CURTAS, maximo 20 palavras por frase."
+    + "\n- Inclua numeros importantes mas sempre com contexto (ex: 'lucrou R$500 milhoes, 30% mais que no ano passado')."
+    + "\n- Tom de conversa amigavel e acolhedora, sem ser condescendente.",
+  "intermediario":"REGRA DE TOM — INTERMEDIARIO (cliente com nocoes basicas):"
+    + "\n- O cliente investe ha alguns anos, entende o basico mas nao e profissional do mercado."
+    + "\n- PODE usar termos populares SEM explicar: lucro liquido, receita, dividendo, acao, fundo imobiliario, CDI, Selic, inflacao, valorizacao, desvalorizacao, cotacao, patrimonio, rentabilidade, renda fixa, renda variavel, preco-teto, desconto."
+    + "\n- PODE usar MAS EXPLIQUE brevemente na primeira vez que aparecer no texto:"
+    + "\n  * P/L → 'P/L (quantas vezes o lucro anual o mercado paga pela acao)'"
+    + "\n  * EBITDA → 'EBITDA (lucro operacional antes de juros e impostos)'"
+    + "\n  * Yield → 'yield (retorno em dividendos sobre o preco da acao)'"
+    + "\n  * ROE → 'ROE (retorno sobre o patrimonio — quanto a empresa gera de lucro com o dinheiro dos acionistas)'"
+    + "\n  * Margem liquida → 'margem liquida (percentual da receita que vira lucro de verdade)'"
+    + "\n- EVITE completamente (ou substitua por versao simples): duration, beta, Sharpe, carry, NTN-B, DI futuro, premio de risco, re-rating, de-rating, EV/EBITDA, ROIC, fluxo de caixa descontado."
+    + "\n- Paragrafos de 2-3 frases, com numeros relevantes."
+    + "\n- Tom profissional e acessivel — como um consultor de confianca explicando para o cliente.",
+  "profissional":"REGRA DE TOM — PROFISSIONAL (cliente experiente do mercado):"
+    + "\n- Linguagem tecnica completa de mercado financeiro. O cliente domina todos os conceitos."
+    + "\n- Use LIVREMENTE todos os termos e indicadores: P/L, P/VP, EV/EBITDA, yield, dividend yield, spread, duration, beta, Sharpe, fluxo de caixa descontado, DCF, margem bruta, margem EBITDA, margem liquida, ROE, ROIC, WACC, alavancagem financeira, guidance, consenso de mercado, upside, downside, re-rating, de-rating, carry, NTN-B, DI futuro, premio de risco, multiplos, peer comparison, free cash flow yield, payout ratio, capex, opex, same-store sales, book value, NAV."
+    + "\n- Inclua TODOS os numeros relevantes com precisao (percentuais com 1 casa decimal)."
+    + "\n- Faca comparacoes com peers, benchmarks e historico quando os dados permitirem."
+    + "\n- Analise densa e aprofundada. Paragrafos podem ser mais longos."
+    + "\n- Tom de relatorio de research de corretora institucional (XP, BTG, Itau BBA)."
 };
 var TONE_MAP_SHORT = {
-  "simples":"linguagem simples de conversa informal, SEM termos tecnicos, frases curtas, como para alguem que nunca investiu",
-  "intermediario":"linguagem acessivel com termos basicos explicados, como para cliente com nocoes de investimento",
-  "profissional":"linguagem tecnica completa de research institucional, com todos os termos e numeros do mercado"
+  "simples":"linguagem simples com analogias do dia-a-dia, SEM termos tecnicos, para quem nunca investiu",
+  "intermediario":"linguagem acessivel, termos populares liberados, termos avancados explicados brevemente na primeira vez",
+  "profissional":"linguagem tecnica completa com todos os indicadores e termos do mercado, tom de research institucional"
 };
 function getToneInstruction(tone, short) { return short ? (TONE_MAP_SHORT[tone]||TONE_MAP_SHORT["simples"]) : (TONE_MAP[tone]||TONE_MAP["simples"]); }
 
@@ -575,13 +605,53 @@ function ReportModal(p) {
 
   var selCount = Object.keys(selTickers).length;
 
+  // Few-shot examples per tone (calibrated with consultant's real style)
+  var FEW_SHOT = {
+    "simples": {
+      example_input: {
+        result: "Resultado operacional excepcional com volumes recordes, forte geracao de caixa (FCF de US$ 1,7 bi) e EBITDA crescendo 17% a/a. A divisao de Metais Basicos foi destaque com EBITDA +157%. O prejuizo contabil de US$ 3,84 bi decorre exclusivamente de ajustes nao-caixa (impairments e provisoes). Lucro proforma ajustado foi de US$ 1,46 bi (+68% a/a).",
+        thesis: "Vale e uma das principais mineradoras do mundo com producao de baixo custo, exposicao a economia asiatica (principalmente China), forte geracao de caixa e politica generosa de distribuicao de proventos.",
+        sunoView: "Recomendacao de COMPRA mantida com preco-teto de R$ 78,00. O ruido contabil do 4T25 nao afeta a tese. Valuation atrativo combinado com yield de duplo digito em proventos."
+      },
+      example_output: {
+        result: "A Vale teve um otimo trimestre. Produziu mais minerio do que em qualquer periodo dos ultimos 6 anos e conseguiu vender tudo a um bom preco. O caixa da empresa engordou US$ 1,7 bilhao so nesse trimestre. Apareceu um prejuizo no papel, mas nao se preocupe — foi so um ajuste contabil, como se a empresa tivesse reavaliado o valor de algumas fabricas no Canada para baixo. Na pratica, o lucro real foi de US$ 1,46 bilhao, 68% maior que no mesmo periodo do ano passado.",
+        thesis: "Imagine a Vale como a dona de uma fazenda gigante, so que em vez de soja, ela colhe minerio de ferro. E ela faz isso mais barato que quase todos os concorrentes no mundo. O principal cliente e a China, que precisa de toneladas desse minerio para suas construcoes. Como a Vale gasta pouco para produzir, sobra bastante dinheiro — e ela repassa uma parte generosa desse lucro para os investidores. A empresa tambem esta apostando em metais do futuro, como cobre e niquel, que sao essenciais para baterias e energia renovavel.",
+        sunoView: "Os analistas da Suno recomendam comprar Vale ate o preco de R$ 78,00. Hoje a acao esta mais barata que isso, o que significa que ainda tem espaco para valorizar. Aquele prejuizo que apareceu no balanco foi so no papel — na pratica, a empresa continua gerando muito dinheiro. A parte de cobre e niquel, que antes era fraca, agora virou um ponto forte. E o melhor: a Vale paga dividendos altos, entao mesmo enquanto voce espera a acao subir, esta recebendo uma renda."
+      }
+    },
+    "intermediario": {
+      example_input: {
+        result: "Resultado operacional excepcional com volumes recordes, forte geracao de caixa (FCF de US$ 1,7 bi) e EBITDA crescendo 17% a/a. A divisao de Metais Basicos foi destaque com EBITDA +157%. O prejuizo contabil de US$ 3,84 bi decorre exclusivamente de ajustes nao-caixa.",
+        thesis: "Vale e uma das principais mineradoras do mundo com producao de baixo custo, exposicao a economia asiatica, forte geracao de caixa e politica generosa de distribuicao de proventos.",
+        sunoView: "Recomendacao de COMPRA mantida com preco-teto de R$ 78,00. Valuation atrativo combinado com yield de duplo digito."
+      },
+      example_output: {
+        result: "A Vale entregou um trimestre operacionalmente forte, com producao recorde de minerio e geracao de caixa livre de US$ 1,7 bi. O EBITDA (lucro operacional antes de juros e impostos) cresceu 17% na comparacao anual. O destaque foi a divisao de Metais Basicos, que mais que dobrou seu resultado. O prejuizo contabil de US$ 3,84 bi nao reflete a operacao — veio de baixas contabeis em ativos de niquel no Canada. O lucro ajustado real foi de US$ 1,46 bi, alta de 68%.",
+        thesis: "A Vale e uma mineradora de classe mundial com o diferencial de ser produtora de baixo custo — ou seja, mesmo que o preco do minerio caia, ela continua lucrando. O minerio de ferro de alta qualidade e vendido majoritariamente para a Asia, com destaque para a China. A empresa se destaca pela forte geracao de caixa, que sustenta dividendos generosos aos acionistas (distribuiu US$ 48 bi entre 2020 e 2024). A divisao de metais basicos (cobre e niquel) vem ganhando protagonismo e oferece potencial de crescimento ligado a transicao energetica global.",
+        sunoView: "A Suno mantem recomendacao de compra ate R$ 78,00. Os analistas consideram que o valuation esta atrativo: a acao negocia com desconto em relacao ao valor justo da empresa. O resultado contabil negativo do 4T25 e pontual e nao recorrente — a geracao de caixa permanece forte em US$ 5,6 bi no ano. Os dividendos estao na casa de dois digitos de retorno, e a divisao de cobre/niquel oferece um potencial de valorizacao que o mercado ainda nao reconheceu no preco."
+      }
+    },
+    "profissional": {
+      example_input: {
+        result: "Resultado operacional excepcional com volumes recordes, forte geracao de caixa (FCF de US$ 1,7 bi) e EBITDA crescendo 17% a/a.",
+        thesis: "Vale e uma das principais mineradoras do mundo com producao de baixo custo e forte geracao de caixa.",
+        sunoView: "Recomendacao de COMPRA mantida com preco-teto de R$ 78,00. Valuation atrativo."
+      },
+      example_output: {
+        result: "VALE3 reportou resultado acima do consenso no 4T25. EBITDA proforma atingiu US$ 4,83 bi, +17% a/a, totalizando US$ 15,8 bi em 2025. Producao de minerio nos maiores niveis desde 2018, com guidances anuais atingidos ou superados. O grande driver foi a divisao VBM (Metais para Transicao Energetica), que entregou EBITDA de US$ 1,39 bi — +157% a/a — com custo all-in negativo no cobre. Na linha de custos, C1 de US$ 21,3/t reflete segundo ano consecutivo de reducao. Alavancagem confortavel em 1,2x.",
+        thesis: "Tese fundamentada em tres pilares: (i) posicao de low-cost producer com C1 cash cost de US$ 21,3/t, garantindo margem operacional positiva mesmo em cenarios de estresse de preco; (ii) exposicao estrutural a demanda asiatica, com ~80% da receita de minerio destinada a China/India; e (iii) retorno ao acionista agressivo — US$ 48 bi distribuidos entre 2020-2024. Divisao VBM oferece opcionalidade de re-rating com exposicao direta a eletrificacao global. Alavancagem confortavel (~1,2x Divida Liquida/EBITDA).",
+        sunoView: "Suno mantem recomendacao de compra com preco-teto de R$ 78,00, implicando upside relevante nos niveis atuais. O prejuizo contabil do 4T25 decorre de impairment de US$ 3,5 bi nos ativos de niquel no Canada e baixa de impostos diferidos — ambos nao-caixa e nao-recorrentes, sem impacto na tese. Tese sustentada por: (i) dividend yield de duplo digito como piso de retorno; (ii) turnaround da divisao de Metais Basicos ja materializado como vetor de re-rating; (iii) balanco desalavancado (1,2x Divida Liquida/EBITDA) como margem de seguranca."
+      }
+    }
+  };
+
   // AI rewrite helper - rewrites text fields in selected tone
   async function rewriteTexts(stocks) {
-    if (writingTone === "profissional") return stocks;
     setGenProgress("Adaptando textos ao tom selecionado...");
-    var batchSize = 2; // Small batches = much better tone consistency
+    var batchSize = 2;
     var rewritten = stocks.map(function(s){return Object.assign({},s);});
     var toneRule = getToneInstruction(writingTone, false);
+    var fewShot = FEW_SHOT[writingTone] || FEW_SHOT["simples"];
 
     for (var b = 0; b < rewritten.length; b += batchSize) {
       var batch = rewritten.slice(b, b + batchSize);
@@ -601,10 +671,21 @@ function ReportModal(p) {
       try {
         var sys = 'Voce e um tradutor de linguagem financeira. Sua UNICA tarefa e reescrever textos de investimento mudando o TOM, sem alterar fatos ou numeros.'
           + '\n\n' + toneRule
-          + '\n\nREGRA CRITICA: Releia CADA frase que voce escrever e verifique se esta no tom correto. Se encontrar QUALQUER termo tecnico proibido, reescreva a frase.'
+          + '\n\nREGRAS CRITICAS:'
+          + '\n1) Releia CADA frase antes de finalizar. Verifique se o tom esta correto.'
+          + '\n2) NAO use a mesma analogia ou explicacao para conceitos diferentes (ex: margem bruta e margem liquida sao coisas distintas).'
+          + '\n3) Mantenha TODOS os dados numericos e fatos do texto original — so mude a forma de expressar.'
+          + '\n4) Se o texto original menciona um indicador, adapte ao tom: no simples use analogia, no intermediario explique brevemente, no profissional mantenha o termo tecnico.'
+          + '\n5) Siga EXATAMENTE o estilo do exemplo abaixo. Ele define o padrao de escrita que voce deve replicar.'
           + '\n\nResponda SOMENTE com JSON puro: [{"ticker":"","thesis":"","result":"","sunoView":"","thesisPros":[""],"thesisCons":[""],"resultPros":[""],"resultCons":[""]}]';
-        var userMsg = 'LEMBRETE: ' + (writingTone === "simples" ? "PROIBIDO usar P/L, EBITDA, yield, spread, margem, guidance, ROE. Use palavras do dia-a-dia. Frases CURTAS de no maximo 15 palavras." : "Termos basicos OK, mas explique brevemente termos avancados.")
-          + '\n\nReescreva estes textos:\n' + JSON.stringify(toRewrite);
+        var userMsg = 'EXEMPLO DE REFERENCIA — este e o estilo EXATO que voce deve seguir:\n\n'
+          + 'ANTES (resultado): ' + fewShot.example_input.result + '\n'
+          + 'DEPOIS (resultado): ' + fewShot.example_output.result + '\n\n'
+          + 'ANTES (tese): ' + fewShot.example_input.thesis + '\n'
+          + 'DEPOIS (tese): ' + fewShot.example_output.thesis + '\n\n'
+          + 'ANTES (visao): ' + fewShot.example_input.sunoView + '\n'
+          + 'DEPOIS (visao): ' + fewShot.example_output.sunoView + '\n\n'
+          + '---\n\nAgora reescreva estes textos NO MESMO ESTILO do exemplo acima:\n' + JSON.stringify(toRewrite);
         var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:4096,system:sys,messages:[{role:"user",content:userMsg}]})});
         if (resp.ok) {
           var d = await resp.json();
@@ -642,10 +723,8 @@ function ReportModal(p) {
       var selected=allStocks.filter(function(s){return selTickers[s.ticker];});
       selected.sort(function(a,b){return(b.rankScore||0)-(a.rankScore||0);});
 
-      // Rewrite in selected tone if not professional
-      if (writingTone !== "profissional") {
-        selected = await rewriteTexts(selected);
-      }
+      // Rewrite texts in selected tone via AI
+      selected = await rewriteTexts(selected);
 
       setGenProgress("Gerando PDF...");
       var doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
