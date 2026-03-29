@@ -3621,10 +3621,11 @@ export default function App() {
   var [cloudReady, setCloudReady] = useState(0); // increments when cloud data arrives, forces re-mount
 
   // Load: localStorage first (instant), then cloud (async override if newer)
+  // If cloud is empty but local has data, push local to cloud (initial migration)
   useEffect(function(){
     // 1. Local load (instant)
     try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}
-    // 2. Cloud load (async — overrides local if cloud has data)
+    // 2. Cloud load (async)
     setSyncStatus("syncing");
     var loadCount = 0;
     function checkDone() { loadCount++; if (loadCount >= 4) { setSyncStatus("synced"); setCloudReady(function(c){return c+1;}); } }
@@ -3634,29 +3635,40 @@ export default function App() {
         setData(migrateData(cloudData));
         try { localStorage.setItem("tt-v7", JSON.stringify(cloudData)); } catch(e) {}
         console.log("[sync] loaded app_data from cloud");
+      } else {
+        // Cloud empty — push local data up
+        try { var local = localStorage.getItem("tt-v7"); if(local){ var ld=JSON.parse(local); if(ld.Dividendos||ld.Valor){ syncToCloud("app_data",{data:ld,updated_at:new Date().toISOString()}); console.log("[sync] pushed app_data to cloud (initial)"); }}} catch(e){}
       }
       checkDone();
     }).catch(function(err) { console.error("[sync] cloud load error:", err); setSyncStatus("error"); checkDone(); });
 
-    // Also sync clients, macro, carteiras from cloud
     loadFromCloud("client_profiles", "profiles").then(function(cp) {
       if (cp && Array.isArray(cp) && cp.length > 0) {
         try { localStorage.setItem("tt-clients", JSON.stringify(cp)); } catch(e) {}
         console.log("[sync] loaded client_profiles from cloud (" + cp.length + " profiles)");
+      } else {
+        // Cloud empty — push local
+        try { var local = localStorage.getItem("tt-clients"); if(local){ var lp=JSON.parse(local); if(Array.isArray(lp)&&lp.length>0){ syncToCloud("client_profiles",{profiles:lp,updated_at:new Date().toISOString()}); console.log("[sync] pushed client_profiles to cloud (initial, " + lp.length + " profiles)"); }}} catch(e){}
       }
       checkDone();
     }).catch(function(){ checkDone(); });
+
     loadFromCloud("macro_data", "data").then(function(md) {
       if (md && Object.keys(md).length > 0) {
         try { localStorage.setItem("tt-macro", JSON.stringify(md)); } catch(e) {}
         console.log("[sync] loaded macro_data from cloud");
+      } else {
+        try { var local = localStorage.getItem("tt-macro"); if(local){ var lm=JSON.parse(local); if(Object.keys(lm).length>0){ syncToCloud("macro_data",{data:lm,updated_at:new Date().toISOString()}); console.log("[sync] pushed macro_data to cloud (initial)"); }}} catch(e){}
       }
       checkDone();
     }).catch(function(){ checkDone(); });
+
     loadFromCloud("carteiras_data", "data").then(function(cd) {
       if (cd && Object.keys(cd).length > 0) {
         try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(cd)); } catch(e) {}
         console.log("[sync] loaded carteiras_data from cloud");
+      } else {
+        try { var local = localStorage.getItem("tt-carteiras-suno"); if(local){ var lc=JSON.parse(local); if(Object.keys(lc).length>0){ syncToCloud("carteiras_data",{data:lc,updated_at:new Date().toISOString()}); console.log("[sync] pushed carteiras_data to cloud (initial)"); }}} catch(e){}
       }
       checkDone();
     }).catch(function(){ checkDone(); });
@@ -3665,12 +3677,28 @@ export default function App() {
   // Save: localStorage + cloud (debounced)
   useEffect(function(){
     try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}
-    // Only sync to cloud if data has actual content (not empty default)
     var hasContent = (data.Dividendos && data.Dividendos.length > 0) || (data.Valor && data.Valor.length > 0) || (data["Small Caps"] && data["Small Caps"].length > 0) || (data.Internacional && data.Internacional.length > 0);
     if (hasContent) {
       syncToCloud("app_data", {data: data, updated_at: new Date().toISOString()});
     }
   },[data]);
+
+  // Force sync: push ALL local data to cloud (manual trigger)
+  function forceSync() {
+    setSyncStatus("syncing");
+    notify("Sincronizando todos os dados...");
+    try {
+      var localData = localStorage.getItem("tt-v7");
+      if (localData) syncToCloud("app_data", {data: JSON.parse(localData), updated_at: new Date().toISOString()});
+      var localClients = localStorage.getItem("tt-clients");
+      if (localClients) syncToCloud("client_profiles", {profiles: JSON.parse(localClients), updated_at: new Date().toISOString()});
+      var localMacro = localStorage.getItem("tt-macro");
+      if (localMacro) syncToCloud("macro_data", {data: JSON.parse(localMacro), updated_at: new Date().toISOString()});
+      var localCarteiras = localStorage.getItem("tt-carteiras-suno");
+      if (localCarteiras) syncToCloud("carteiras_data", {data: JSON.parse(localCarteiras), updated_at: new Date().toISOString()});
+      setTimeout(function(){ setSyncStatus("synced"); notify("Dados enviados para a nuvem!"); }, 2500);
+    } catch(err) { console.error("[sync] force sync error:", err); setSyncStatus("error"); notify("Erro na sincronização","err"); }
+  }
 
   function notify(msg,type){setNotif({msg:msg,type:type||"ok"});setTimeout(function(){setNotif(null);},3500);}
   function nav(p, pg) { setPilar(p); setPage(pg); setOpenDropdown(null); }
@@ -3849,6 +3877,7 @@ export default function App() {
           </div>
 
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+            <button onClick={forceSync} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(59,130,246,0.3)",background:"rgba(59,130,246,0.08)",color:"#60a5fa",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>☁ Forçar Sincronização</button>
             <button onClick={function(){if(confirm("Resetar dados?")){try{localStorage.removeItem("tt-v7");}catch(e){}setData(makeData());notify("Dados resetados!");}}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(220,38,38,0.2)",background:"transparent",color:"rgba(220,38,38,0.6)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Resetar Dados</button>
             <button onClick={function(){var b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="advisory-hub-backup.json";a.click();}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Exportar JSON</button>
             <label style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(34,197,94,0.2)",background:"transparent",color:"rgba(34,197,94,0.6)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Importar JSON<input type="file" accept=".json" style={{display:"none"}} onChange={function(e){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(){try{var d=JSON.parse(r.result);if(d.Dividendos||d.Valor){setData(migrateData(d));notify("Importado!");}else notify("JSON inválido","err");}catch(er){notify("Erro: "+er.message,"err");}};r.readAsText(f);}}/></label>
