@@ -962,7 +962,7 @@ function ReportModal(p) {
         <div style={{marginBottom:"14px"}}>
           <label style={Object.assign({},lS,{marginBottom:"6px"})}>Tom do texto no PDF</label>
           <ToneSelector value={writingTone} onChange={setWritingTone} color="#ef4444"/>
-          {writingTone!=="profissional"&&<div style={{fontSize:"9px",color:"rgba(251,191,36,0.5)",marginTop:"4px"}}>A IA vai adaptar os textos para o tom "{writingTone==="simples"?"Simples":"Intermediário"}" antes de gerar o PDF</div>}
+          <div style={{fontSize:"9px",color:writingTone==="profissional"?"rgba(139,92,246,0.5)":writingTone==="intermediario"?"rgba(96,165,250,0.5)":"rgba(251,191,36,0.5)",marginTop:"4px"}}>{writingTone==="simples"?"A IA vai simplificar os textos com analogias do dia-a-dia, sem termos técnicos":writingTone==="intermediario"?"A IA vai adaptar os textos explicando termos avançados de forma acessível":"A IA vai reescrever com linguagem técnica completa de research institucional"}</div>
         </div>
 
         <div style={{marginBottom:"14px"}}>
@@ -3618,6 +3618,7 @@ export default function App() {
   var [openDropdown, setOpenDropdown] = useState(null);
 
   var [syncStatus, setSyncStatus] = useState("idle"); // idle, syncing, synced, error
+  var [cloudReady, setCloudReady] = useState(0); // increments when cloud data arrives, forces re-mount
 
   // Load: localStorage first (instant), then cloud (async override if newer)
   useEffect(function(){
@@ -3625,14 +3626,17 @@ export default function App() {
     try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}
     // 2. Cloud load (async — overrides local if cloud has data)
     setSyncStatus("syncing");
+    var loadCount = 0;
+    function checkDone() { loadCount++; if (loadCount >= 4) { setSyncStatus("synced"); setCloudReady(function(c){return c+1;}); } }
+
     loadFromCloud("app_data", "data").then(function(cloudData) {
       if (cloudData && Object.keys(cloudData).length > 0 && (cloudData.Dividendos || cloudData.Valor)) {
         setData(migrateData(cloudData));
         try { localStorage.setItem("tt-v7", JSON.stringify(cloudData)); } catch(e) {}
         console.log("[sync] loaded app_data from cloud");
       }
-      setSyncStatus("synced");
-    }).catch(function(err) { console.error("[sync] cloud load error:", err); setSyncStatus("error"); });
+      checkDone();
+    }).catch(function(err) { console.error("[sync] cloud load error:", err); setSyncStatus("error"); checkDone(); });
 
     // Also sync clients, macro, carteiras from cloud
     loadFromCloud("client_profiles", "profiles").then(function(cp) {
@@ -3640,19 +3644,22 @@ export default function App() {
         try { localStorage.setItem("tt-clients", JSON.stringify(cp)); } catch(e) {}
         console.log("[sync] loaded client_profiles from cloud (" + cp.length + " profiles)");
       }
-    }).catch(function(){});
+      checkDone();
+    }).catch(function(){ checkDone(); });
     loadFromCloud("macro_data", "data").then(function(md) {
       if (md && Object.keys(md).length > 0) {
         try { localStorage.setItem("tt-macro", JSON.stringify(md)); } catch(e) {}
         console.log("[sync] loaded macro_data from cloud");
       }
-    }).catch(function(){});
+      checkDone();
+    }).catch(function(){ checkDone(); });
     loadFromCloud("carteiras_data", "data").then(function(cd) {
       if (cd && Object.keys(cd).length > 0) {
         try { localStorage.setItem("tt-carteiras-suno", JSON.stringify(cd)); } catch(e) {}
         console.log("[sync] loaded carteiras_data from cloud");
       }
-    }).catch(function(){});
+      checkDone();
+    }).catch(function(){ checkDone(); });
   },[]);
 
   // Save: localStorage + cloud (debounced)
@@ -3788,26 +3795,59 @@ export default function App() {
         </div>)}
 
         {/* RESEARCH > CARTEIRAS */}
-        {pilar==="research"&&page==="carteiras"&&<CarteirasModal onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="research"&&page==="carteiras"&&<CarteirasModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
 
         {/* RESEARCH > MACRO */}
-        {pilar==="research"&&page==="macro"&&<MacroModal onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="research"&&page==="macro"&&<MacroModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
 
         {/* CONSULTORIA > RECOMENDAÇÕES */}
-        {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal key={cloudReady} data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
 
         {/* CONSULTORIA > REUNIÃO */}
-        {pilar==="consultoria"&&page==="reuniao"&&<MeetingPrepModal data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="consultoria"&&page==="reuniao"&&<MeetingPrepModal key={cloudReady} data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
 
         {/* CLIENTES > PERFIS */}
-        {pilar==="clientes"&&page==="perfis"&&<ClientProfilesModal onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="clientes"&&page==="perfis"&&<ClientProfilesModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
 
         {/* CLIENTES > PANORAMA */}
-        {pilar==="clientes"&&page==="panorama"&&<ReportModal data={data} onClose={function(){nav("clientes","panorama");}} inline={true}/>}
+        {pilar==="clientes"&&page==="panorama"&&<ReportModal key={cloudReady} data={data} onClose={function(){nav("clientes","panorama");}} inline={true}/>}
 
         {/* CLIENTES > CONFIG */}
         {pilar==="clientes"&&page==="config"&&(<div style={{padding:"24px"}}>
           <div style={{fontSize:"16px",fontWeight:800,color:"#fff",marginBottom:"16px"}}>Configurações</div>
+
+          <div style={{marginBottom:"20px",background:"rgba(74,222,128,0.04)",border:"1px solid rgba(74,222,128,0.15)",borderRadius:"10px",padding:"14px"}}>
+            <div style={{fontSize:"11px",fontWeight:700,color:"#4ade80",marginBottom:"8px"}}>☁ Sincronização na Nuvem</div>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",marginBottom:"10px",lineHeight:1.5}}>
+              Os dados são sincronizados automaticamente com o Supabase. Acesse de qualquer dispositivo em <span style={{color:"rgba(255,255,255,0.6)"}}>suno-advisory-hub.vercel.app</span>
+            </div>
+            <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+              <button onClick={function(){
+                setSyncStatus("syncing");
+                notify("Enviando todos os dados para a nuvem...");
+                var hasContent = data.Dividendos||data.Valor;
+                if(hasContent) syncToCloud("app_data", {data: data, updated_at: new Date().toISOString()});
+                var cp = loadClientProfiles();
+                if(cp.length>0) syncToCloud("client_profiles", {profiles: cp, updated_at: new Date().toISOString()});
+                var md = loadMacroData();
+                if(Object.keys(md).length>0) syncToCloud("macro_data", {data: md, updated_at: new Date().toISOString()});
+                var cd = loadCarteiras();
+                if(Object.keys(cd).length>0) syncToCloud("carteiras_data", {data: cd, updated_at: new Date().toISOString()});
+                setTimeout(function(){setSyncStatus("synced");notify("Dados enviados para a nuvem!");},3000);
+              }} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(74,222,128,0.2)",background:"rgba(74,222,128,0.08)",color:"#4ade80",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>☁ Forçar Upload para Nuvem</button>
+              <button onClick={function(){
+                setSyncStatus("syncing");
+                notify("Baixando dados da nuvem...");
+                loadFromCloud("app_data","data").then(function(d){if(d&&(d.Dividendos||d.Valor)){setData(migrateData(d));try{localStorage.setItem("tt-v7",JSON.stringify(d));}catch(e){}}});
+                loadFromCloud("client_profiles","profiles").then(function(cp){if(cp&&cp.length>0){try{localStorage.setItem("tt-clients",JSON.stringify(cp));}catch(e){}}});
+                loadFromCloud("macro_data","data").then(function(md){if(md&&Object.keys(md).length>0){try{localStorage.setItem("tt-macro",JSON.stringify(md));}catch(e){}}});
+                loadFromCloud("carteiras_data","data").then(function(cd){if(cd&&Object.keys(cd).length>0){try{localStorage.setItem("tt-carteiras-suno",JSON.stringify(cd));}catch(e){}}});
+                setTimeout(function(){setSyncStatus("synced");setCloudReady(function(c){return c+1;});notify("Dados baixados da nuvem!");},3000);
+              }} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(96,165,250,0.2)",background:"rgba(96,165,250,0.08)",color:"#60a5fa",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>⬇ Baixar da Nuvem</button>
+            </div>
+            <div style={{marginTop:"8px",fontSize:"9px",color:"rgba(255,255,255,0.25)"}}>Status: {syncStatus==="synced"?"✅ Sincronizado":syncStatus==="syncing"?"⏳ Sincronizando...":syncStatus==="error"?"❌ Erro de conexão":"⏸ Aguardando"}</div>
+          </div>
+
           <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
             <button onClick={function(){if(confirm("Resetar dados?")){try{localStorage.removeItem("tt-v7");}catch(e){}setData(makeData());notify("Dados resetados!");}}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(220,38,38,0.2)",background:"transparent",color:"rgba(220,38,38,0.6)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Resetar Dados</button>
             <button onClick={function(){var b=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});var a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="advisory-hub-backup.json";a.click();}} style={{padding:"8px 16px",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.4)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}>Exportar JSON</button>
