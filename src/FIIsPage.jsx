@@ -231,20 +231,26 @@ export default function FIIsPage() {
 
   /* ── Batch Process ── */
   async function processBatch() {
-    if (!batchText.trim()) return;
+    if (!batchText.trim() && !batchIsBase64) return;
     setBatchLoading(true); setBatchProgress("Identificando FIIs..."); setBatchResults(null); setError("");
     try {
       var toneInst = getToneInstruction(batchTone);
-      var periodoInfo = batchPeriodo ? " Período de referência: " + batchPeriodo + "." : "";
+      var periodoInfo = batchPeriodo ? " Período: " + batchPeriodo + "." : "";
+
+      // Sanitize and truncate text to avoid API 400
+      function sanitize(txt) {
+        return txt.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ").replace(/\s+/g, " ").trim();
+      }
+      var cleanText = batchIsBase64 ? batchText : sanitize(batchText).slice(0, 18000);
 
       var buildMessages = function(content) {
         if (batchIsBase64) {
           return [{ role: "user", content: [
-            { type: "document", source: { type: "base64", media_type: "application/pdf", data: batchText } },
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: cleanText } },
             { type: "text", text: content }
           ]}];
         }
-        return [{ role: "user", content: content + "\n\nRELATÓRIO:\n" + batchText.slice(0, 20000) }];
+        return [{ role: "user", content: content + "\n\nRELATÓRIO:\n" + cleanText }];
       };
 
       // Step 1: identify FIIs
@@ -252,15 +258,17 @@ export default function FIIsPage() {
       var identResp = await fetch("/api/anthropic", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514", max_tokens: 1000,
+          model: "claude-sonnet-4-20250514", max_tokens: 800,
           messages: buildMessages(
-            "Liste TODOS os tickers de FIIs mencionados neste documento (formato XXXX11, ex: KNRI11, BTLG11)." +
-            " Inclua apenas FIIs com informações substantivas." +
-            " Responda APENAS com JSON: [{\"ticker\":\"BRCO11\",\"nome\":\"Bresco Logística\"}]"
+            "Liste os tickers de FIIs (formato XXXX11) com informações substantivas neste documento." +
+            " Responda APENAS com JSON: [{\"ticker\":\"BRCO11\",\"nome\":\"Bresco\"}]"
           )
         })
       });
-      if (!identResp.ok) throw new Error("API " + identResp.status);
+      if (!identResp.ok) {
+        var errBody = await identResp.text().catch(function(){return "";});
+        throw new Error("API " + identResp.status + (errBody ? ": " + errBody.slice(0,200) : ""));
+      }
       var identD = await identResp.json();
       var identRaw = (identD.content || []).map(function(c) { return c.text || ""; }).join("").trim();
       identRaw = identRaw.replace(/```json/g, "").replace(/```/g, "").trim();
@@ -269,35 +277,38 @@ export default function FIIsPage() {
       var identified = JSON.parse(identRaw);
 
       if (!identified || identified.length === 0) {
-        setError("Nenhum FII identificado. Verifique se o conteúdo foi colado/carregado corretamente.");
+        setError("Nenhum FII identificado. Verifique se o conteúdo foi colado corretamente.");
         setBatchLoading(false); setBatchProgress(""); return;
       }
 
-      setBatchProgress("Identificados: " + identified.map(function(f) { return f.ticker; }).join(", "));
+      setBatchProgress("Identificados " + identified.length + " FIIs: " + identified.slice(0,5).map(function(f){return f.ticker;}).join(", ") + (identified.length > 5 ? "..." : ""));
 
-      // Step 2: extract data in batches of 6
+      // Step 2: extract data in batches of 4 (smaller to avoid 400)
       var allResults = [];
-      var batchSize = 6;
+      var batchSize = 4;
       for (var b = 0; b < identified.length; b += batchSize) {
         var chunk = identified.slice(b, b + batchSize);
         var tickerList = chunk.map(function(f) { return f.ticker + (f.nome ? " (" + f.nome + ")" : ""); }).join(", ");
-        setBatchProgress("Extraindo dados: " + tickerList + " (" + (b + 1) + "-" + Math.min(b + batchSize, identified.length) + " de " + identified.length + ")...");
+        setBatchProgress("Extraindo " + (b + 1) + "-" + Math.min(b + batchSize, identified.length) + "/" + identified.length + ": " + tickerList + "...");
 
-        var extractContent = toneInst + periodoInfo +
-          "\n\nPara cada FII listado, extraia do documento as informações de cada seção." +
-          " Se a seção não estiver no documento: \"Não informado neste relatório.\"" +
+        // Keep extraction prompt concise to avoid 400
+        var extractContent = "Tom: " + toneInst.slice(0, 300) + periodoInfo +
+          "\n\nExtraia para cada FII: resultado_periodo, comentario_gestao, vacancia_ocupacao, aquisicoes, perspectivas." +
+          " Seção ausente: \"Não informado.\"" +
           "\n\nFIIs: " + tickerList +
-          "\n\nResposta APENAS em JSON:\n" +
-          '[{"ticker":"XXXX11","nome":"Nome","resultado_periodo":"...","comentario_gestao":"...","vacancia_ocupacao":"...","aquisicoes":"...","perspectivas":"..."}]';
+          '\n\nJSON APENAS:\n[{"ticker":"","nome":"","resultado_periodo":"","comentario_gestao":"","vacancia_ocupacao":"","aquisicoes":"","perspectivas":""}]';
 
         var extractResp = await fetch("/api/anthropic", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: "claude-sonnet-4-20250514", max_tokens: 4000,
+            model: "claude-sonnet-4-20250514", max_tokens: 3000,
             messages: buildMessages(extractContent)
           })
         });
-        if (!extractResp.ok) throw new Error("API " + extractResp.status);
+        if (!extractResp.ok) {
+          var eb = await extractResp.text().catch(function(){return "";});
+          throw new Error("API " + extractResp.status + " ao extrair " + tickerList + (eb ? ": " + eb.slice(0,150) : ""));
+        }
         var extractD = await extractResp.json();
         var extractRaw = (extractD.content || []).map(function(c) { return c.text || ""; }).join("").trim();
         extractRaw = extractRaw.replace(/```json/g, "").replace(/```/g, "").trim();
