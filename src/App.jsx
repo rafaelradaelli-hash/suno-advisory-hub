@@ -3747,7 +3747,7 @@ export default function App() {
 
   // Pillar configs
   var pillarItems = {
-   {id:"fiis",label:"🏢 FIIs"},
+{id:"fiis",label:"FIIs"},
     research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"macro",label:"Macro & Viés"}],
     consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
     clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}]
