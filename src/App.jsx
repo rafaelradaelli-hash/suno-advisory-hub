@@ -552,11 +552,11 @@ export default function App() {
         dados: form,
       };
 
-      // Tentativa 1: insert normal
+      // Insert SEM .select() — anon não precisa ler de volta a linha,
+      // apenas confirmar que salvou. Isso evita conflito com RLS de SELECT.
       let { data, error } = await supabase
         .from("questionarios")
-        .insert(payload)
-        .select();
+        .insert(payload);
 
       // Se falhou por RLS e há sessão ativa, tenta deslogar e reenviar como anon
       if (error && error.message?.includes("row-level security")) {
@@ -566,8 +566,7 @@ export default function App() {
           await supabase.auth.signOut();
           const retry = await supabase
             .from("questionarios")
-            .insert(payload)
-            .select();
+            .insert(payload);
           data = retry.data;
           error = retry.error;
         }
