@@ -2127,7 +2127,7 @@ function MeetingPrepModal(p) {
           var tMsg = "CLIENTE: " + profileCtx + posCtx + "\nFOCO DA REUNIAO: " + (meetingFocus || "revisao trimestral");
           if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
           tMsg += '\n\nGere um roteiro de conversa ESTRUTURADO em 4 blocos, separados por \\n\\n dentro da string talkPoints:\n\n'
-            ++ 'ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
+            + 'ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
             + 'PONTOS PRINCIPAIS A APRESENTAR\n- [tema 1 - frase especifica para este cliente]\n- [tema 2]\n- [tema 3]\n- [tema 4]\n\n'
             + 'PERGUNTAS PARA FAZER AO CLIENTE\n- [pergunta aberta sobre perfil/objetivos]\n- [pergunta sobre tolerancia/liquidez]\n\n'
             + 'PROXIMOS PASSOS SUGERIDOS\n- [acao concreta 1]\n- [acao concreta 2]\n\n'
