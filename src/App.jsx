@@ -1929,6 +1929,9 @@ function MeetingPrepModal(p) {
   var [selectedProfile, setSelectedProfile] = useState(null);
   var [meetingDate, setMeetingDate] = useState(new Date().toISOString().slice(0,10));
   var [meetingFocus, setMeetingFocus] = useState("");
+  // NEW: modo genérico (sem cliente) vs modo cliente
+  var [genericMode, setGenericMode] = useState(false);
+  var [genericTitle, setGenericTitle] = useState("");
 
   // Module selections
   var [wantMacroShort, setWantMacroShort] = useState(true);
@@ -1967,7 +1970,7 @@ function MeetingPrepModal(p) {
   }
 
   async function generateAll() {
-    if (!selectedProfile) return;
+    if (!selectedProfile && !genericMode) return;
     setGenerating(true); setError(""); setGenProgress("Preparando...");
     var res = {macroShort:null, macroDetail:null, empresas:{}, talkPoints:null};
 
@@ -2059,11 +2062,16 @@ function MeetingPrepModal(p) {
       var hasMacroCtx = macroText.trim().length > 30;
       console.log("[macro] contexto montado:", macroReports.length, "relatorios,", macroText.length, "chars");
       var hojeBR = new Date().toLocaleDateString("pt-BR", {day:"2-digit", month:"long", year:"numeric"});
-      var profileCtx = (selectedProfile.name||"") + ", " + (selectedProfile.age||"?") + " anos, " + (selectedProfile.riskProfile||"Moderado") + ", horizonte " + (selectedProfile.horizon||"?") + " anos";
+      var profileCtx = "";
       var posCtx = "";
-      if (selectedProfile.posAssets) {
-        var topA = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,10);
-        if (topA.length > 0) posCtx = ". Top ativos: " + topA.map(function(a){return a.ticker;}).join(", ");
+      if (genericMode) {
+        profileCtx = "Panorama geral (sem cliente especifico)" + (genericTitle ? ": " + genericTitle : "");
+      } else {
+        profileCtx = (selectedProfile.name||"") + ", " + (selectedProfile.age||"?") + " anos, " + (selectedProfile.riskProfile||"Moderado") + ", horizonte " + (selectedProfile.horizon||"?") + " anos";
+        if (selectedProfile.posAssets) {
+          var topA = selectedProfile.posAssets.filter(function(a){return a.totalValue>0;}).sort(function(a,b){return (b.totalValue||0)-(a.totalValue||0);}).slice(0,10);
+          if (topA.length > 0) posCtx = ". Top ativos: " + topA.map(function(a){return a.ticker;}).join(", ");
+        }
       }
 
       // ── MACRO ──
@@ -2267,18 +2275,33 @@ function MeetingPrepModal(p) {
 
       // ── TALKING POINTS ──
       if (wantTalkPoints) {
-        setGenProgress("Gerando talking points...");
+        setGenProgress("Gerando " + (genericMode ? "pontos-chave" : "talking points") + "...");
         try {
-          var tMsg = "CLIENTE: " + profileCtx + posCtx + "\nFOCO DA REUNIAO: " + (meetingFocus || "revisao trimestral");
-          if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
-          tMsg += '\n\nGere um roteiro de conversa ESTRUTURADO em 4 blocos, separados por \\n\\n dentro da string talkPoints:\n\n'
-            + 'ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
-            + 'PONTOS PRINCIPAIS A APRESENTAR\n- [tema 1 - frase especifica para este cliente]\n- [tema 2]\n- [tema 3]\n- [tema 4]\n\n'
-            + 'PERGUNTAS PARA FAZER AO CLIENTE\n- [pergunta aberta sobre perfil/objetivos]\n- [pergunta sobre tolerancia/liquidez]\n\n'
-            + 'PROXIMOS PASSOS SUGERIDOS\n- [acao concreta 1]\n- [acao concreta 2]\n\n'
-            + 'Personalize TUDO com base nos dados do cliente (idade, perfil de risco, horizonte, ativos em carteira). '
-            + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.';
-          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Voce e um consultor CNPI senior com 20 anos de experiencia. Esta ajudando um colega a estruturar a conversa com o cliente dele. Use linguagem profissional, consultiva e orientada a acao. Cada ponto deve ser PERSONALIZADO com base nos dados do cliente — nao use generalidades. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser UMA STRING (nao array).",messages:[{role:"user",content:tMsg}]});
+          var tMsg;
+          if (genericMode) {
+            tMsg = "CONTEXTO: " + profileCtx + "\nTEMA/OBJETIVO: " + (meetingFocus || "panorama geral do mercado");
+            if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
+            tMsg += '\n\nGere PONTOS-CHAVE PARA APRESENTACAO estruturados em 3 blocos separados por \\n\\n dentro da string talkPoints:\n\n'
+              + 'MENSAGEM CENTRAL\n[1-2 frases resumindo a tese principal do panorama atual]\n\n'
+              + 'PONTOS PRINCIPAIS\n- [tema 1 com numero/dado concreto]\n- [tema 2]\n- [tema 3]\n- [tema 4]\n\n'
+              + 'CONCLUSOES E DIRECIONAMENTOS\n- [conclusao acionavel 1]\n- [conclusao acionavel 2]\n- [conclusao acionavel 3]\n\n'
+              + 'Linguagem editorial/institucional, como em um briefing de research. SEM referencias a cliente especifico. '
+              + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.';
+          } else {
+            tMsg = "CLIENTE: " + profileCtx + posCtx + "\nFOCO DA REUNIAO: " + (meetingFocus || "revisao trimestral");
+            if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
+            tMsg += '\n\nGere um roteiro de conversa ESTRUTURADO em 4 blocos, separados por \\n\\n dentro da string talkPoints:\n\n'
+              + 'ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
+              + 'PONTOS PRINCIPAIS A APRESENTAR\n- [tema 1 - frase especifica para este cliente]\n- [tema 2]\n- [tema 3]\n- [tema 4]\n\n'
+              + 'PERGUNTAS PARA FAZER AO CLIENTE\n- [pergunta aberta sobre perfil/objetivos]\n- [pergunta sobre tolerancia/liquidez]\n\n'
+              + 'PROXIMOS PASSOS SUGERIDOS\n- [acao concreta 1]\n- [acao concreta 2]\n\n'
+              + 'Personalize TUDO com base nos dados do cliente (idade, perfil de risco, horizonte, ativos em carteira). '
+              + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.';
+          }
+          var tSystem = genericMode
+            ? "Voce e um economista-chefe de research escrevendo pontos-chave institucionais para apresentacao ou conteudo. Linguagem editorial e orientada a dados. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser UMA STRING."
+            : "Voce e um consultor CNPI senior com 20 anos de experiencia. Esta ajudando um colega a estruturar a conversa com o cliente dele. Use linguagem profissional, consultiva e orientada a acao. Cada ponto deve ser PERSONALIZADO com base nos dados do cliente. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser UMA STRING.";
+          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:tSystem,messages:[{role:"user",content:tMsg}]});
           var tRaw = extractText(tD.content);
           if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(toStr(tP.talkPoints))||null; }
         } catch(te) { console.error("TP err:", te); warnings.push("talking points (" + te.message.slice(0,80) + ")"); }
@@ -2324,7 +2347,7 @@ function MeetingPrepModal(p) {
         doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
         doc.text("SUNO ADVISORY HUB", ML, 10);
         doc.setFont("helvetica","normal"); setC(CLR.muted);
-        var headerRight = (selectedProfile ? selectedProfile.name : "") + "  ·  " + meetingDate;
+        var headerRight = (genericMode ? (genericTitle || "Panorama Macro") : (selectedProfile ? selectedProfile.name : "")) + "  ·  " + meetingDate;
         doc.text(headerRight, W-MR, 10, {align:"right"});
         // Hairline below header
         setD(CLR.hairline); doc.setLineWidth(0.2);
@@ -2493,13 +2516,18 @@ function MeetingPrepModal(p) {
 
       // Large title
       doc.setFontSize(36); doc.setFont("helvetica","bold"); setC(CLR.dark);
-      doc.text("Preparo de", ML, 78);
-      doc.text("Reunião", ML, 94);
+      if (genericMode) {
+        doc.text("Panorama", ML, 78);
+        doc.text("Macro", ML, 94);
+      } else {
+        doc.text("Preparo de", ML, 78);
+        doc.text("Reunião", ML, 94);
+      }
 
       // Decorative element
       setF(CLR.accent); doc.rect(ML, 102, 60, 1.2, "F");
 
-      // Client card
+      // Client/Generic card
       var cardY = 120;
       setF(CLR.cardBg); doc.roundedRect(ML, cardY, CW, 52, 3, 3, "F");
       setD(CLR.hairline); doc.roundedRect(ML, cardY, CW, 52, 3, 3, "S");
@@ -2507,14 +2535,20 @@ function MeetingPrepModal(p) {
       setF(CLR.accent); doc.rect(ML, cardY, 1.5, 52, "F");
 
       doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
-      doc.text("CLIENTE", ML+8, cardY+10);
+      doc.text(genericMode ? "PANORAMA" : "CLIENTE", ML+8, cardY+10);
       doc.setFontSize(16); doc.setFont("helvetica","bold"); setC(CLR.dark);
-      doc.text(selectedProfile ? selectedProfile.name : "—", ML+8, cardY+20);
+      if (genericMode) {
+        doc.text(genericTitle || "Panorama Macro Geral", ML+8, cardY+20);
+      } else {
+        doc.text(selectedProfile ? selectedProfile.name : "—", ML+8, cardY+20);
+      }
 
       // Meta
       doc.setFontSize(8); doc.setFont("helvetica","normal"); setC(CLR.muted);
       var metaLines = [];
-      if (selectedProfile) {
+      if (genericMode) {
+        if (meetingFocus) metaLines.push(meetingFocus);
+      } else if (selectedProfile) {
         if (selectedProfile.age) metaLines.push(selectedProfile.age + " anos");
         if (selectedProfile.riskProfile) metaLines.push("Perfil: " + selectedProfile.riskProfile);
         if (selectedProfile.horizon) metaLines.push("Horizonte: " + selectedProfile.horizon + " anos");
@@ -2522,7 +2556,7 @@ function MeetingPrepModal(p) {
       if (metaLines.length) doc.text(metaLines.join("  ·  "), ML+8, cardY+28);
 
       doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
-      doc.text("DATA DA REUNIÃO", ML+8, cardY+38);
+      doc.text(genericMode ? "DATA" : "DATA DA REUNIÃO", ML+8, cardY+38);
       doc.setFontSize(10); doc.setFont("helvetica","normal"); setC(CLR.dark);
       doc.text(meetingDate, ML+8, cardY+44);
 
@@ -2544,7 +2578,7 @@ function MeetingPrepModal(p) {
       if (results.macroShort) tocItems.push("Cenário Macro · Resumo Executivo");
       if (results.macroDetail) tocItems.push("Cenário Macro · Análise Detalhada");
       if (Object.keys(results.empresas).length > 0) tocItems.push("Empresas em Foco (" + Object.keys(results.empresas).length + ")");
-      if (results.talkPoints) tocItems.push("Roteiro de Conversa");
+      if (results.talkPoints) tocItems.push(genericMode ? "Pontos-Chave para Apresentação" : "Roteiro de Conversa");
       tocItems.forEach(function(item, i) {
         setF(CLR.accent); doc.circle(ML+1.5, tocY-1.3, 0.9, "F");
         doc.setFontSize(10); setC(CLR.body); doc.setFont("helvetica","normal");
@@ -2661,7 +2695,7 @@ function MeetingPrepModal(p) {
       // TALKING POINTS
       if (results.talkPoints) {
         y += 6;
-        drawSectionTitle("Roteiro de Conversa", "Estrutura sugerida para conduzir a reunião");
+        drawSectionTitle(genericMode ? "Pontos-Chave para Apresentação" : "Roteiro de Conversa", genericMode ? "Estrutura editorial para apresentação ou conteúdo" : "Estrutura sugerida para conduzir a reunião");
         renderStructuredText(results.talkPoints, {bodySize:10, leading:6.2});
       }
 
@@ -2677,12 +2711,12 @@ function MeetingPrepModal(p) {
         setF([255,255,255]); doc.rect(0, H-13.5, W, 13.5, "F");
         setD(CLR.hairline); doc.setLineWidth(0.2); doc.line(ML, H-14, W-MR, H-14);
         doc.setFontSize(7); doc.setFont("helvetica","normal"); setC(CLR.muted);
-        doc.text("Briefing de Reunião · " + (selectedProfile ? selectedProfile.name : ""), ML, H-9);
+        doc.text((genericMode ? "Panorama Macro · " + (genericTitle || "Geral") : "Briefing de Reunião · " + (selectedProfile ? selectedProfile.name : "")), ML, H-9);
         doc.text((pg-1) + " / " + contentPages, W-MR, H-9, {align:"right"});
         setF(CLR.accent); doc.rect(0,H-1.2,W,1.2,"F");
       }
 
-      var fname = "briefing-" + (selectedProfile?selectedProfile.name.replace(/\s+/g,"-").toLowerCase():"cliente") + "-" + meetingDate + ".pdf";
+      var fname = (genericMode ? "panorama-" + ((genericTitle || "macro").replace(/\s+/g,"-").toLowerCase().slice(0,30)) : "briefing-" + (selectedProfile?selectedProfile.name.replace(/\s+/g,"-").toLowerCase():"cliente")) + "-" + meetingDate + ".pdf";
       doc.save(fname);
     } catch(err){ console.error(err); alert("Erro PDF: " + err.message); }
     setPdfGenerating(false);
@@ -2694,27 +2728,64 @@ function MeetingPrepModal(p) {
 
   // Client position assets (RV only for empresa selection)
   var clientAssets = selectedProfile && selectedProfile.posAssets ? selectedProfile.posAssets.filter(function(a){return a.totalValue > 0;}) : [];
+  // Generic mode: use all stocks from carteirasData (Suno portfolios)
+  var genericAssets = [];
+  if (genericMode) {
+    var seenTickers = {};
+    Object.keys(carteirasData || {}).forEach(function(portKey) {
+      var port = carteirasData[portKey];
+      if (port && Array.isArray(port.stocks)) {
+        port.stocks.forEach(function(s){
+          if (s && s.ticker && !seenTickers[s.ticker]) {
+            seenTickers[s.ticker] = true;
+            genericAssets.push({ticker: s.ticker, name: s.name || "", _portfolio: port.name || portKey});
+          }
+        });
+      }
+    });
+    // Fallback: use allAppStocks if carteirasData is empty
+    if (genericAssets.length === 0) {
+      allAppStocks.forEach(function(s){
+        if (s && s.ticker && !seenTickers[s.ticker]) {
+          seenTickers[s.ticker] = true;
+          genericAssets.push({ticker: s.ticker, name: s.name || "", _portfolio: s._portfolio || ""});
+        }
+      });
+    }
+  }
+  var availableAssets = genericMode ? genericAssets : clientAssets;
+  var canGenerate = genericMode || !!selectedProfile;
 
   return (
     <div style={p.inline?{padding:"0"}:{position:"fixed",inset:0,zIndex:2000,background:"rgba(0,0,0,0.9)",display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
       <div style={{background:"#0A0A0A",borderRadius:"16px",border:"1px solid rgba(139,92,246,0.15)",width:"100%",maxWidth:"850px",maxHeight:"92vh",overflow:"auto",padding:"0"}}>
         {/* Header */}
         <div style={{padding:"20px 24px 14px",borderBottom:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center",position:"sticky",top:0,background:"#0A0A0A",zIndex:10,borderRadius:"16px 16px 0 0"}}>
-          <div><div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>Preparo de Reunião</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>Monte seu briefing personalizado</div></div>
+          <div><div style={{fontSize:"16px",fontWeight:800,color:"#fff"}}>{genericMode ? "Panorama Macro" : "Preparo de Reunião"}</div><div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",marginTop:"2px"}}>{genericMode ? "Briefing genérico, sem cliente específico" : "Monte seu briefing personalizado"}</div></div>
           <button onClick={p.onClose} style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.4)",fontSize:"20px",cursor:p.inline?"default":"pointer",display:p.inline?"none":"block"}}>✕</button>
         </div>
 
         <div style={{padding:"16px 24px 24px"}}>
           {error&&<div style={{color:"#f87171",fontSize:"11px",padding:"8px 10px",background:"rgba(220,38,38,0.08)",borderRadius:"6px",marginBottom:"10px"}}>{error}</div>}
 
-          {/* Client + Date + Focus */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"16px"}}>
-            <div><label style={lS}>Cliente</label><select value={selectedProfileId} onChange={function(e){selectClient(e.target.value);}} style={iS}><option value="" style={{background:"#1a1a1a"}}>Selecionar...</option>{clientProfiles.map(function(pr){return <option key={pr.id} value={pr.id} style={{background:"#1a1a1a"}}>{pr.name||"Sem nome"}</option>;})}</select></div>
-            <div><label style={lS}>Data da Reunião</label><input type="date" value={meetingDate} onChange={function(e){setMeetingDate(e.target.value);}} style={iS}/></div>
-            <div><label style={lS}>Foco / Pauta</label><input value={meetingFocus} onChange={function(e){setMeetingFocus(e.target.value);}} placeholder="Ex: trimestral, rebalanceamento" style={iS}/></div>
+          {/* Mode Toggle */}
+          <div style={{display:"flex",gap:"6px",marginBottom:"16px",padding:"4px",background:"rgba(255,255,255,0.03)",borderRadius:"10px",border:"1px solid rgba(255,255,255,0.05)"}}>
+            <button onClick={function(){setGenericMode(false);setResults(null);}} style={{flex:1,padding:"9px",borderRadius:"7px",border:"none",cursor:"pointer",fontWeight:700,fontSize:"11px",background:!genericMode?"rgba(139,92,246,0.15)":"transparent",color:!genericMode?"#a78bfa":"rgba(255,255,255,0.4)"}}>Briefing para Cliente</button>
+            <button onClick={function(){setGenericMode(true);setResults(null);setSelectedProfile(null);setSelectedProfileId("");setSelectedEmpresas({});}} style={{flex:1,padding:"9px",borderRadius:"7px",border:"none",cursor:"pointer",fontWeight:700,fontSize:"11px",background:genericMode?"rgba(139,92,246,0.15)":"transparent",color:genericMode?"#a78bfa":"rgba(255,255,255,0.4)"}}>Briefing Genérico</button>
           </div>
 
-          {selectedProfile&&(<div>
+          {/* Client/Generic + Date + Focus */}
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"16px"}}>
+            {genericMode ? (
+              <div><label style={lS}>Título do Panorama</label><input value={genericTitle} onChange={function(e){setGenericTitle(e.target.value);}} placeholder="Ex: Abril 2026" style={iS}/></div>
+            ) : (
+              <div><label style={lS}>Cliente</label><select value={selectedProfileId} onChange={function(e){selectClient(e.target.value);}} style={iS}><option value="" style={{background:"#1a1a1a"}}>Selecionar...</option>{clientProfiles.map(function(pr){return <option key={pr.id} value={pr.id} style={{background:"#1a1a1a"}}>{pr.name||"Sem nome"}</option>;})}</select></div>
+            )}
+            <div><label style={lS}>Data</label><input type="date" value={meetingDate} onChange={function(e){setMeetingDate(e.target.value);}} style={iS}/></div>
+            <div><label style={lS}>{genericMode ? "Tema / Objetivo" : "Foco / Pauta"}</label><input value={meetingFocus} onChange={function(e){setMeetingFocus(e.target.value);}} placeholder={genericMode?"Ex: post LinkedIn, alinhamento":"Ex: trimestral, rebalanceamento"} style={iS}/></div>
+          </div>
+
+          {canGenerate&&(<div>
             {/* Module selection */}
             <div style={{fontSize:"10px",fontWeight:700,color:"#a78bfa",textTransform:"uppercase",letterSpacing:"1px",marginBottom:"10px"}}>O que preparar?</div>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"6px",marginBottom:"14px"}}>
@@ -2737,16 +2808,16 @@ function MeetingPrepModal(p) {
             </div>
 
             {/* Empresa selection (if checked) */}
-            {wantEmpresas&&clientAssets.length>0&&(<div style={{marginBottom:"14px"}}>
+            {wantEmpresas&&availableAssets.length>0&&(<div style={{marginBottom:"14px"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"6px"}}>
                 <span style={{fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.4)"}}>Selecione empresas ({Object.keys(selectedEmpresas).length})</span>
                 <div style={{display:"flex",gap:"4px"}}>
-                  <button onClick={function(){var sel={};clientAssets.forEach(function(a){if(/^[A-Z]{4}(3|4|5|6|11)$/.test(a.ticker))sel[a.ticker]=true;});setSelectedEmpresas(sel);}} style={{fontSize:"8px",padding:"3px 6px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Todas RV</button>
+                  <button onClick={function(){var sel={};availableAssets.forEach(function(a){if(/^[A-Z]{4}(3|4|5|6|11)$/.test(a.ticker))sel[a.ticker]=true;});setSelectedEmpresas(sel);}} style={{fontSize:"8px",padding:"3px 6px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer"}}>Todas RV</button>
                   <button onClick={function(){setSelectedEmpresas({});}} style={{fontSize:"8px",padding:"3px 6px",borderRadius:"4px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.3)",cursor:"pointer"}}>Limpar</button>
                 </div>
               </div>
               <div style={{display:"flex",flexWrap:"wrap",gap:"4px",maxHeight:"120px",overflow:"auto"}}>
-                {clientAssets.filter(function(a){return /^[A-Z]{3,6}\d{0,2}$/.test(a.ticker);}).map(function(a){
+                {availableAssets.filter(function(a){return /^[A-Z]{3,6}\d{0,2}$/.test(a.ticker);}).map(function(a){
                   var isSel=!!selectedEmpresas[a.ticker];
                   return <button key={a.ticker} onClick={function(){setSelectedEmpresas(function(prev){var n=Object.assign({},prev);if(n[a.ticker])delete n[a.ticker];else n[a.ticker]=true;return n;});}} style={{padding:"4px 8px",borderRadius:"6px",fontSize:"10px",fontWeight:isSel?700:500,background:isSel?"rgba(139,92,246,0.15)":"rgba(255,255,255,0.03)",color:isSel?"#a78bfa":"rgba(255,255,255,0.35)",border:isSel?"1px solid rgba(139,92,246,0.3)":"1px solid rgba(255,255,255,0.06)",cursor:"pointer"}}>{a.ticker}</button>;
                 })}
@@ -2796,7 +2867,7 @@ function MeetingPrepModal(p) {
             </div>)}
           </div>)}
 
-          {!selectedProfile&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Selecione um cliente para começar.</div>}
+          {!canGenerate&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Selecione um cliente para começar.</div>}
         </div>
       </div>
     </div>
