@@ -3622,6 +3622,38 @@ export default function App() {
   var [syncStatus, setSyncStatus] = useState("idle"); // idle, syncing, synced, error
   var [cloudReady, setCloudReady] = useState(0); // increments when cloud data arrives, forces re-mount
 
+  // Hidden admin mode: type "sunoia" anywhere to trigger password prompt
+  var [adminMode, setAdminMode] = useState(function(){
+    try { return localStorage.getItem("suno-admin-unlock") === "yes"; } catch(e) { return false; }
+  });
+  useEffect(function(){
+    if (adminMode) return; // already unlocked, skip listener
+    var buffer = "";
+    var SECRET_TRIGGER = "sunoia";
+    var ADMIN_PASSWORD = "Chopim159@";
+    function onKey(e){
+      // Ignore keystrokes when typing in inputs/textareas
+      var tag = (e.target && e.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      if (e.key && e.key.length === 1) {
+        buffer = (buffer + e.key.toLowerCase()).slice(-SECRET_TRIGGER.length);
+        if (buffer === SECRET_TRIGGER) {
+          buffer = "";
+          var pwd = window.prompt("Senha de administrador:");
+          if (pwd === ADMIN_PASSWORD) {
+            try { localStorage.setItem("suno-admin-unlock", "yes"); } catch(e) {}
+            setAdminMode(true);
+            window.alert("Modo admin ativado. Consulta IA disponível no menu Research.");
+          } else if (pwd !== null) {
+            window.alert("Senha incorreta.");
+          }
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return function(){ window.removeEventListener("keydown", onKey); };
+  }, [adminMode]);
+
   // Load: localStorage first (instant), then cloud (async override if newer)
   // If cloud is empty but local has data, push local to cloud (initial migration)
   useEffect(function(){
@@ -3749,7 +3781,7 @@ export default function App() {
 
   // Pillar configs
   var pillarItems = {
-    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"},{id:"chat",label:"Consulta IA ✨"}],
+    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"}].concat(adminMode ? [{id:"chat",label:"Consulta IA ✨"}] : []),
     consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
     clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}]
   };
@@ -3830,7 +3862,7 @@ export default function App() {
         {/* RESEARCH > MACRO */}
         {pilar==="research"&&page==="macro"&&<MacroModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
         {pilar==="research"&&page==="fiis"&&<FIIsPage key={cloudReady}/>}
-        {pilar==="research"&&page==="chat"&&<div style={{padding:"24px"}}><AdvisorChat key={cloudReady} data={data}/></div>}
+        {pilar==="research"&&page==="chat"&&adminMode&&<div style={{padding:"24px"}}><AdvisorChat key={cloudReady} data={data}/></div>}
 
         {/* CONSULTORIA > RECOMENDAÇÕES */}
         {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal key={cloudReady} data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
