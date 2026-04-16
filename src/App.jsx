@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import FIIsPage from './FIIsPage';
 import FIIsTab from './FIIsTab';
+import AdvisorChat from './AdvisorChat.jsx';
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
 
@@ -3748,7 +3749,7 @@ export default function App() {
 
   // Pillar configs
   var pillarItems = {
-    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"}],
+    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"},{id:"chat",label:"Consulta IA ✨"}],
     consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
     clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}]
   };
@@ -3829,6 +3830,7 @@ export default function App() {
         {/* RESEARCH > MACRO */}
         {pilar==="research"&&page==="macro"&&<MacroModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
         {pilar==="research"&&page==="fiis"&&<FIIsPage key={cloudReady}/>}
+        {pilar==="research"&&page==="chat"&&<div style={{padding:"24px"}}><AdvisorChat key={cloudReady} data={data}/></div>}
 
         {/* CONSULTORIA > RECOMENDAÇÕES */}
         {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal key={cloudReady} data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
