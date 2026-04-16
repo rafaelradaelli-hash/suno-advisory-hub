@@ -1922,7 +1922,6 @@ function MeetingPrepModal(p) {
   var [wantTalkPoints, setWantTalkPoints] = useState(true);
   var [wantPDF, setWantPDF] = useState(false);
   var [selectedEmpresas, setSelectedEmpresas] = useState({});
-  var [writingTone, setWritingTone] = useState("simples");
 
   // Results
   var [generating, setGenerating] = useState(false);
@@ -1979,6 +1978,25 @@ function MeetingPrepModal(p) {
       console.error("Failed to parse JSON from:", raw.slice(0, 300));
       throw new Error("Sem JSON valido na resposta da IA");
     }
+    // Normalize IA response into a string — handles arrays, objects, null
+    function toStr(x) {
+      if (x === null || x === undefined) return "";
+      if (typeof x === "string") return x;
+      if (Array.isArray(x)) {
+        return x.map(function(item){
+          if (typeof item === "string") return "• " + item;
+          if (item && typeof item === "object") return "• " + (item.text || item.content || JSON.stringify(item));
+          return "• " + String(item);
+        }).join("\n");
+      }
+      if (typeof x === "object") {
+        // Prefer common fields, else stringify
+        if (x.text) return String(x.text);
+        if (x.content) return String(x.content);
+        return Object.keys(x).map(function(k){ return k + ": " + (typeof x[k] === "string" ? x[k] : JSON.stringify(x[k])); }).join("\n");
+      }
+      return String(x);
+    }
     async function callAPI(body) {
       console.log("API call:", body.model, "system:", (body.system||"").slice(0,80), "msg:", (body.messages[0].content||"").slice(0,80));
       var resp = await fetch("/api/anthropic", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -2020,9 +2038,9 @@ function MeetingPrepModal(p) {
           } else {
             mPrompt += 'Gere JSON: {"macroDetail":"3 paragrafos detalhados sobre economia BR, global, perspectivas"} JSON puro.';
           }
-          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Consultor financeiro. " + getToneInstruction(writingTone, true) + ". JSON puro sem markdown.",messages:[{role:"user",content:mPrompt}]});
+          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Voce e um consultor financeiro CNPI experiente escrevendo para outro consultor. Use linguagem tecnica de research institucional (Selic, inflacao, DI, NTN-B, premio de risco, etc). Retorne APENAS JSON puro, sem markdown, sem ```. Cada campo deve ser uma STRING de texto (nao array).",messages:[{role:"user",content:mPrompt}]});
           var mRaw = extractText(mD.content);
-          if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(mP.macroShort)||null; res.macroDetail = cleanCitations(mP.macroDetail)||null; }
+          if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(toStr(mP.macroShort))||null; res.macroDetail = cleanCitations(toStr(mP.macroDetail))||null; }
         } catch(me) { console.error("Macro err:", me); warnings.push("macro (" + me.message.slice(0,80) + ")"); }
       }
 
@@ -2038,9 +2056,9 @@ function MeetingPrepModal(p) {
               return {ticker:tk, result: app ? (app.result||"").slice(0,200) : "", sentiment: app ? app.sentiment : "neutral"};
             });
             try {
-              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Resumo 1 paragrafo por empresa. " + getToneInstruction(writingTone, true) + '. JSON: [{"ticker":"","summary":""}]',messages:[{role:"user",content:JSON.stringify(eCtx)}]});
+              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Voce e um consultor CNPI preparando briefing para outro consultor. Para cada empresa, escreva 1 paragrafo objetivo com linguagem tecnica (cite numeros, multiplos, guidance quando disponivel). Retorne APENAS JSON puro no formato: [{\"ticker\":\"XXXX3\",\"summary\":\"texto do paragrafo como STRING\"}]. Sem markdown, sem ```, cada summary deve ser uma STRING.",messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
-              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(e.summary||"")};}); }
+              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(toStr(e.summary))};}); }
             } catch(ee) { console.error("Emp err:", ee); warnings.push("empresas"); }
           }
         }
@@ -2052,10 +2070,10 @@ function MeetingPrepModal(p) {
         try {
           var tMsg = "Cliente: " + profileCtx + posCtx + "\nFoco: " + (meetingFocus || "trimestral");
           if (res.macroShort) tMsg += "\nMacro: " + res.macroShort.slice(0,500);
-          tMsg += '\n\nGere 5-7 talking points personalizados. JSON: {"talkPoints":"- ponto 1\n- ponto 2"}';
-          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:1500,system:"Talking points para reuniao. " + getToneInstruction(writingTone, true) + ". JSON puro.",messages:[{role:"user",content:tMsg}]});
+          tMsg += '\n\nGere 5-7 talking points personalizados para abrir/conduzir a reuniao com este cliente. Retorne JSON no formato exato: {"talkPoints":"- primeiro ponto\\n- segundo ponto\\n- terceiro ponto"}. O valor de talkPoints deve ser UMA STRING UNICA com bullets separados por \\n. Nao use arrays.';
+          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:1500,system:"Voce e um consultor CNPI experiente ajudando outro consultor a estruturar a conversa com o cliente. Use linguagem profissional mas conversacional. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser uma STRING (nao array).",messages:[{role:"user",content:tMsg}]});
           var tRaw = extractText(tD.content);
-          if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(tP.talkPoints)||null; }
+          if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(toStr(tP.talkPoints))||null; }
         } catch(te) { console.error("TP err:", te); warnings.push("talking points (" + te.message.slice(0,80) + ")"); }
       }
 
@@ -2182,9 +2200,8 @@ function MeetingPrepModal(p) {
               </div>
             </div>)}
 
-            {/* Tone selector + Generate button */}
+            {/* Generate button */}
             {!results&&(<div>
-              <div style={{marginBottom:"10px"}}><ToneSelector value={writingTone} onChange={setWritingTone} color="#7c3aed"/></div>
               <button onClick={generateAll} disabled={generating} style={Object.assign({},btnBase,{width:"100%",background:generating?"rgba(139,92,246,0.2)":"#7c3aed",color:"#fff",padding:"12px",fontSize:"13px"})}>
               {generating?genProgress:"Gerar Briefing"}
             </button></div>)}
