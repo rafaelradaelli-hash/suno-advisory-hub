@@ -1980,17 +1980,34 @@ function MeetingPrepModal(p) {
     }
     function safeParseJSON(raw) {
       raw = raw.trim().replace(/```json\s*/g,"").replace(/```\s*/g,"").replace(/```/g,"");
+      // Estrategia 1: parse direto (caso mais comum)
+      try { return JSON.parse(raw); } catch(e) { /* continua */ }
+      // Estrategia 2: objeto (de { ate })
       var si = raw.indexOf("{"); var ei = raw.lastIndexOf("}");
       if (si >= 0 && ei > si) {
         var chunk = raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
-        try { return JSON.parse(chunk); } catch(e) { console.warn("JSON parse attempt 1 failed:", e.message); }
+        try { return JSON.parse(chunk); } catch(e) { /* continua */ }
       }
-      si = raw.indexOf("["); ei = raw.lastIndexOf("]");
+      // Estrategia 3: array (de [ ate ])
+      var asi = raw.indexOf("["); var aei = raw.lastIndexOf("]");
+      if (asi >= 0 && aei > asi) {
+        var chunk2 = raw.slice(asi, aei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+        try { return JSON.parse(chunk2); } catch(e2) { /* continua */ }
+      }
+      // Estrategia 4: objeto envolvendo array (ex: {"empresas": [...]})
       if (si >= 0 && ei > si) {
-        var chunk2 = raw.slice(si, ei + 1).replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
-        try { return JSON.parse(chunk2); } catch(e2) { console.warn("JSON parse attempt 2 failed:", e2.message); }
+        var chunkObj = raw.slice(si, ei + 1);
+        // Tenta remover newlines desnecessarios no meio de strings quebradas
+        var cleaned = chunkObj.replace(/([^\\])\n/g, "$1 ").replace(/\t/g, " ").replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+        try { return JSON.parse(cleaned); } catch(e3) { /* continua */ }
       }
-      console.error("Failed to parse JSON from:", raw.slice(0, 300));
+      // Estrategia 5: se for um array dentro de texto, tenta extrair o primeiro [...] valido
+      if (asi >= 0 && aei > asi) {
+        var chunkArr = raw.slice(asi, aei + 1);
+        var cleanedArr = chunkArr.replace(/([^\\])\n/g, "$1 ").replace(/\t/g, " ").replace(/,\s*}/g,"}").replace(/,\s*\]/g,"]");
+        try { return JSON.parse(cleanedArr); } catch(e4) { /* continua */ }
+      }
+      console.error("Failed to parse JSON from (primeiros 500 chars):", raw.slice(0, 500));
       throw new Error("Sem JSON valido na resposta da IA");
     }
     // Normalize IA response into a string — handles arrays, objects, null
@@ -2067,26 +2084,22 @@ function MeetingPrepModal(p) {
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com EXATAMENTE dois campos: {"macroShort": "string aqui", "macroDetail": "string aqui"}\n'
               + 'IMPORTANTE: As chaves sao EXATAMENTE "macroShort" e "macroDetail" em camelCase. Ambas sao STRINGS simples (nao objetos nem arrays).\n\n'
-              + 'FORMATO DO macroShort — OBRIGATORIAMENTE 4 linhas separadas por \\n (quebra de linha real no JSON).\n'
-              + 'Cada linha comeca com um LABEL em caixa alta seguido de dois pontos, depois o conteudo. As 4 linhas sao EXATAMENTE nesta ordem e formato:\n\n'
-              + 'SELIC: [nivel atual] + direcao esperada + proxima decisao Copom\\nINFLACAO: [IPCA 12m] + tendencia + distancia da meta\\nCAMBIO: [USD/BRL] + principais drivers + range projetado\\nBOLSA: [Ibov] + fluxo + valuation vs historico\n\n'
-              + 'IMPORTANTE: use \\n (com barra invertida + n) para separar as 4 linhas dentro da string JSON. NAO emende tudo em um paragrafo. NAO esqueca o \\n entre cada linha. Max 30 palavras por linha.\n'
-              + 'Exemplo CORRETO (observe os \\n):\n'
-              + '"macroShort": "SELIC: 14,75% com tendencia de queda gradual apos Copom manter em outubro.\\nINFLACAO: IPCA 12m em 4,2% cedendo rumo a meta de 3%.\\nCAMBIO: USD/BRL 5,15 pressionado por carry trade favoravel.\\nBOLSA: Ibov 135k com earnings yield atrativo vs DI."\n\n'
-              + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.\n\n'
-              + 'FORMATO DO macroDetail (string unica com 3 secoes densas separadas por \\n\\n):\n\n'
-              + 'BRASIL\n[Analise de 5-7 frases cobrindo: atividade economica (IBC-Br, PIB), inflacao (IPCA, nucleos), politica monetaria (Selic, Copom), fiscal. Use numeros concretos dos relatorios.]\n\n'
-              + 'CENARIO GLOBAL\n[Analise de 5-7 frases cobrindo: Fed, inflacao US, China (PMI, estimulos), commodities, tensoes geopoliticas, DXY. Use numeros dos relatorios.]\n\n'
-              + 'IMPLICACOES PARA PORTFOLIO\n[Analise de 5-7 frases conectando o macro com decisoes: renda fixa, renda variavel, cambio, recomendacoes de overweight/underweight. Seja especifico.]\n\n'
-              + 'IMPORTANTE: macroShort e macroDetail devem usar OS MESMOS numeros dos relatorios. Nao invente indicadores.';
+              + 'AMBOS macroShort e macroDetail devem usar A MESMA ESTRUTURA de 3 secoes separadas por \\n\\n: BRASIL, CENARIO GLOBAL, IMPLICACOES PARA PORTFOLIO.\n'
+              + 'A UNICA diferenca e a densidade de informacao:\n'
+              + '- macroShort = 3 secoes CURTAS (1-2 frases cada, direto ao ponto, so os numeros-chave)\n'
+              + '- macroDetail = 3 secoes DENSAS (5-7 frases cada, analise completa)\n\n'
+              + 'FORMATO DO macroShort (usar \\n\\n entre secoes):\n\n'
+              + 'BRASIL\\n[1-2 frases com Selic atual, IPCA 12m, direcao]\\n\\nCENARIO GLOBAL\\n[1-2 frases com Fed, commodities, fluxo]\\n\\nIMPLICACOES PARA PORTFOLIO\\n[1-2 frases com recomendacao de alocacao, classe favorita]\n\n'
+              + 'Exemplo CORRETO do macroShort:\n'
+              + '"macroShort": "BRASIL\\nSelic em 14,75% com tendencia de queda gradual. IPCA 12m em 4,8%, cedendo rumo a meta de 3%.\\n\\nCENARIO GLOBAL\\nFed mantendo juros altos, commodities em alta beneficiando exportadores brasileiros.\\n\\nIMPLICACOES PARA PORTFOLIO\\nOverweight em NTN-B e acoes de commodities. Manter hedge cambial."\n\n'
+              + 'FORMATO DO macroDetail (usar \\n\\n entre secoes, cada secao com 5-7 frases):\n\n'
+              + 'BRASIL\\n[Analise de 5-7 frases cobrindo atividade economica (IBC-Br, PIB), inflacao (IPCA, nucleos), politica monetaria (Selic, Copom), fiscal e emprego. Use numeros concretos dos relatorios.]\\n\\nCENARIO GLOBAL\\n[Analise de 5-7 frases cobrindo Fed, inflacao US, China, commodities, tensoes geopoliticas, DXY. Use numeros dos relatorios.]\\n\\nIMPLICACOES PARA PORTFOLIO\\n[Analise de 5-7 frases conectando o macro com decisoes: renda fixa, renda variavel, cambio, recomendacoes de overweight/underweight especificas.]\n\n'
+              + 'REGRA CRITICA: macroShort e macroDetail devem usar OS MESMOS numeros dos relatorios. Nao invente indicadores. NAO use emojis. Apenas letras, numeros e acentos portugueses.';
           } else if (wantMacroShort) {
             mPrompt += 'Gere JSON: {"macroShort":"..."}\n\n'
-              + 'FORMATO (string unica, exatos 4 bullets com emoji, um por linha):\n'
-              + 'SELIC: [nivel atual] + direcao esperada + impacto\n'
-              + 'INFLACAO: [IPCA 12m] + tendencia + meta\n'
-              + 'CAMBIO: [USD/BRL] + drivers + cenario\n'
-              + 'BOLSA: [Ibov nivel] + fluxo + valuation\n\n'
-              + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.';
+              + 'FORMATO: 3 secoes CURTAS separadas por \\n\\n, cada uma com 1-2 frases:\n\n'
+              + 'BRASIL\\n[1-2 frases com Selic, IPCA 12m, direcao]\\n\\nCENARIO GLOBAL\\n[1-2 frases com Fed, commodities]\\n\\nIMPLICACOES PARA PORTFOLIO\\n[1-2 frases com recomendacao]\n\n'
+              + 'Use numeros concretos dos relatorios. NAO use emojis. Apenas letras, numeros e acentos portugueses.';
           } else {
             mPrompt += 'Gere JSON: {"macroDetail":"..."}\n\n'
               + 'FORMATO (string unica com 3 secoes densas separadas por \\n\\n):\n\n'
@@ -2110,20 +2123,6 @@ function MeetingPrepModal(p) {
             }
             if (!res.macroDetail && mP) {
               res.macroDetail = cleanCitations(toStr(mP.macro_detail || mP.detalhado || mP.detail || mP.macroDetalhado || mP["macro-detail"])) || null;
-            }
-            // BLINDAGEM: macroShort DEVE ter 4 labels em linhas separadas (SELIC, INFLACAO, CAMBIO, BOLSA).
-            // Se a IA emendou tudo em parágrafo, forçamos a quebra antes de cada label.
-            if (res.macroShort) {
-              var ms = res.macroShort;
-              // Insere \n antes de cada label (se não estiver no início da string)
-              ms = ms.replace(/\s+(SELIC:)/g, "\n$1");
-              ms = ms.replace(/\s+(INFLA[CÇ][AÃ]O:)/g, "\n$1");
-              ms = ms.replace(/\s+(C[AÂ]MBIO:)/g, "\n$1");
-              ms = ms.replace(/\s+(BOLSA:)/g, "\n$1");
-              // Remove linhas vazias repetidas
-              ms = ms.replace(/\n\s*\n/g, "\n").replace(/^\s+|\s+$/g, "");
-              res.macroShort = ms;
-              console.log("[macro] macroShort apos normalizacao:", ms.slice(0, 400));
             }
             // Warnings se ainda vazio
             if (wantMacroShort && !res.macroShort) {
@@ -2174,43 +2173,80 @@ function MeetingPrepModal(p) {
             });
             try {
               var eSysPrompt = "Voce e um consultor CNPI senior preparando briefing para um colega. "
-                + "Para CADA empresa recebida, retorne um resumo ESTRUTURADO em 4 blocos curtos, separados por \\n\\n dentro da string summary:\\n\\n"
+                + "Para CADA empresa recebida, gere um resumo ESTRUTURADO em 4 blocos curtos separados por \\n\\n:\\n\\n"
                 + "TESE EM UMA LINHA\n[Uma frase de ate 20 palavras explicando a tese central]\n\n"
                 + "DESTAQUES DO ULTIMO RESULTADO\n- [ponto 1 com numero]\n- [ponto 2 com numero]\n- [ponto 3 com numero]\n\n"
                 + "PONTOS DE ATENCAO\n- [risco/fraqueza 1]\n- [risco/fraqueza 2]\n\n"
                 + "VISAO SUNO E ACAO\n[Uma frase sobre preco-teto, margem de seguranca e o que dizer ao cliente]\n\n"
                 + "Use numeros concretos (percentuais, R$, multiplos). "
-                + "IMPORTANTE: retorne APENAS um ARRAY JSON puro (comecando com [ e terminando com ]), nunca um objeto avulso. Formato EXATO: "
-                + '[{"ticker":"XXXX3","summary":"texto..."},{"ticker":"YYYY4","summary":"texto..."}]. '
-                + "Sem markdown, sem ```, sem preambulo. Cada summary e UMA STRING com \\n\\n entre os blocos. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.";
+                + "FORMATO DA RESPOSTA — retorne UM OBJETO JSON simples onde cada CHAVE e o ticker e cada VALOR e o texto do resumo como STRING unica. Exemplo: "
+                + '{"VALE3": "TESE EM UMA LINHA\\nMineradora global...\\n\\nDESTAQUES...", "PETR4": "TESE EM UMA LINHA\\n..."}. '
+                + "Sem markdown, sem ```, sem preambulo, sem texto fora do JSON. Cada valor e UMA STRING com \\n entre os blocos. "
+                + "CRITICO: NAO use emojis. Apenas letras, numeros, pontuacao basica e acentos portugueses.";
               var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:eSysPrompt,messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
               console.log("[empresas] batch " + (eb/3+1) + " IA raw (400 chars):", eRaw ? eRaw.slice(0, 400) : "(vazio)");
               if (eRaw) {
-                var eP = safeParseJSON(eRaw);
-                console.log("[empresas] parsed tipo:", Array.isArray(eP) ? "array(" + eP.length + ")" : (eP ? "objeto keys=" + Object.keys(eP).join(",") : "null"));
-                // Normalizar: IA pode devolver array diretamente OU objeto com chave "empresas"/"companies"/"items"
-                var eList = null;
-                if (Array.isArray(eP)) {
-                  eList = eP;
-                } else if (eP && typeof eP === "object") {
-                  eList = eP.empresas || eP.companies || eP.items || eP.results || null;
-                  // Ou pode ser um objeto com ticker-key (ex: {"VALE3": {...}, "PETR4": {...}})
-                  if (!eList) {
-                    var possibleTickers = Object.keys(eP);
-                    if (possibleTickers.length > 0 && eP[possibleTickers[0]] && typeof eP[possibleTickers[0]] === "object" && (eP[possibleTickers[0]].summary || eP[possibleTickers[0]].text)) {
-                      eList = possibleTickers.map(function(tk){ return Object.assign({ticker: tk}, eP[tk]); });
-                    }
+                var eP = null;
+                try { eP = safeParseJSON(eRaw); } catch(parseErr) {
+                  console.error("[empresas] parse falhou, tentando regex extract:", parseErr.message);
+                  // Fallback manual: regex pra extrair "TICKER": "texto" pares
+                  var regex = /"([A-Z0-9]{3,6})"\s*:\s*"((?:[^"\\]|\\.)*)"/g;
+                  var match;
+                  var extracted = {};
+                  var anyFound = false;
+                  while ((match = regex.exec(eRaw)) !== null) {
+                    extracted[match[1]] = match[2].replace(/\\n/g, "\n").replace(/\\"/g, '"');
+                    anyFound = true;
+                  }
+                  if (anyFound) {
+                    eP = extracted;
+                    console.log("[empresas] fallback regex extraiu:", Object.keys(eP).length, "empresas");
                   }
                 }
-                if (eList && eList.length > 0) {
-                  eList.forEach(function(e){
-                    if (e && e.ticker) {
-                      res.empresas[e.ticker] = {ticker: e.ticker, summary: cleanCitations(toStr(e.summary || e.text || e.content))};
+                console.log("[empresas] parsed tipo:", Array.isArray(eP) ? "array(" + eP.length + ")" : (eP ? "objeto keys=" + Object.keys(eP).slice(0,5).join(",") : "null"));
+                // Normalizar — aceita varios formatos
+                if (eP) {
+                  if (Array.isArray(eP)) {
+                    // Array de {ticker, summary}
+                    eP.forEach(function(e){
+                      if (e && e.ticker) {
+                        res.empresas[e.ticker] = {ticker: e.ticker, summary: cleanCitations(toStr(e.summary || e.text || e.content))};
+                      }
+                    });
+                  } else if (typeof eP === "object") {
+                    // Objeto — pode ser wrapper ou direto
+                    var possibleArrays = [eP.empresas, eP.companies, eP.items, eP.results, eP.data];
+                    var foundArray = null;
+                    for (var pai = 0; pai < possibleArrays.length; pai++) {
+                      if (Array.isArray(possibleArrays[pai])) { foundArray = possibleArrays[pai]; break; }
                     }
-                  });
+                    if (foundArray) {
+                      foundArray.forEach(function(e){
+                        if (e && e.ticker) {
+                          res.empresas[e.ticker] = {ticker: e.ticker, summary: cleanCitations(toStr(e.summary || e.text || e.content))};
+                        }
+                      });
+                    } else {
+                      // Objeto-mapa: {TICKER: "texto" | {summary: "..."}}
+                      Object.keys(eP).forEach(function(tk) {
+                        var valor = eP[tk];
+                        if (typeof valor === "string") {
+                          res.empresas[tk] = {ticker: tk, summary: cleanCitations(valor)};
+                        } else if (valor && typeof valor === "object") {
+                          var txt = valor.summary || valor.text || valor.content || toStr(valor);
+                          res.empresas[tk] = {ticker: tk, summary: cleanCitations(toStr(txt))};
+                        }
+                      });
+                    }
+                  }
+                  var countThisBatch = eBatch.filter(function(t){return res.empresas[t];}).length;
+                  console.log("[empresas] batch " + (eb/3+1) + " extraiu:", countThisBatch, "/", eBatch.length);
+                  if (countThisBatch === 0) {
+                    warnings.push("empresas batch " + (eb/3+1) + " sem dados extraidos (keys: " + Object.keys(eP).slice(0,5).join(",") + ")");
+                  }
                 } else {
-                  warnings.push("empresas batch " + (eb/3+1) + " sem array valido");
+                  warnings.push("empresas batch " + (eb/3+1) + " JSON invalido");
                 }
               } else {
                 warnings.push("empresas batch " + (eb/3+1) + " resposta vazia");
