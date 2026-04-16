@@ -2201,38 +2201,42 @@ function MeetingPrepModal(p) {
       function renderStructuredText(text, opts) {
         opts = opts || {};
         var bodySize = opts.bodySize || 9.5;
-        var leading = opts.leading || 4.8;
+        var leading = opts.leading || 5.8;
         var indent = opts.indent || 0;
         var blocks = (text || "").split(/\n\n+/);
         blocks.forEach(function(block, bi) {
           var lines = block.split("\n");
-          lines.forEach(function(rawLine) {
+          lines.forEach(function(rawLine, lineIdx) {
             var line = rawLine.replace(/\s+$/,"");
-            if (!line.trim()) { y += leading*0.5; return; }
+            if (!line.trim()) { y += leading*0.6; return; }
             // Section header inside a block (emoji + caps)
             if (isSectionHeader(line)) {
-              chk(7);
-              doc.setFontSize(8.5); doc.setFont("helvetica","bold"); setC(CLR.accent);
+              chk(10);
+              // Extra top space before a sub-header (unless it's the first line of the first block)
+              if (!(bi===0 && lineIdx===0)) y += 2;
+              doc.setFontSize(8.8); doc.setFont("helvetica","bold"); setC(CLR.accent);
               doc.text(line, ML+indent, y);
-              y += 5.2;
+              y += 7;
               doc.setFont("helvetica","normal");
               return;
             }
             // Bullet
             if (isBullet(line)) {
               var bText = line.trim().replace(/^[•\-\*]\s*/,"");
-              var wrappedB = wrap(bText, CW-indent-5, bodySize);
+              var wrappedB = wrap(bText, CW-indent-6, bodySize);
               wrappedB.forEach(function(bl, bIdx) {
                 chk(leading+1);
                 if (bIdx===0) {
                   // Filled red dot
                   setF(CLR.bullet);
-                  doc.circle(ML+indent+1.5, y-1.3, 0.8, "F");
+                  doc.circle(ML+indent+1.8, y-1.4, 0.85, "F");
                 }
                 doc.setFontSize(bodySize); doc.setFont("helvetica","normal"); setC(CLR.body);
-                doc.text(bl, ML+indent+5, y);
+                doc.text(bl, ML+indent+6, y);
                 y += leading;
               });
+              // Extra spacing after each bullet
+              y += 1.2;
               return;
             }
             // Regular body line
@@ -2244,28 +2248,28 @@ function MeetingPrepModal(p) {
               y += leading;
             });
           });
-          if (bi < blocks.length - 1) y += 2.5; // spacing between blocks
+          if (bi < blocks.length - 1) y += 4.5; // spacing between blocks (was 2.5)
         });
       }
 
       // Section title (big, with accent underline)
       function drawSectionTitle(title, subtitle) {
-        chk(22);
+        chk(28);
         doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
         doc.text("— SEÇÃO", ML, y);
-        y += 4.5;
-        doc.setFontSize(17); doc.setFont("helvetica","bold"); setC(CLR.dark);
-        doc.text(title, ML, y);
-        y += 2;
-        // Accent underline
-        setF(CLR.accent); doc.rect(ML, y, 18, 0.8, "F");
         y += 5;
+        doc.setFontSize(18); doc.setFont("helvetica","bold"); setC(CLR.dark);
+        doc.text(title, ML, y);
+        y += 2.5;
+        // Accent underline
+        setF(CLR.accent); doc.rect(ML, y, 20, 0.9, "F");
+        y += 6;
         if (subtitle) {
           doc.setFontSize(9); doc.setFont("helvetica","italic"); setC(CLR.muted);
           doc.text(subtitle, ML, y);
-          y += 6;
+          y += 8;
         } else {
-          y += 2;
+          y += 4;
         }
       }
 
@@ -2358,21 +2362,21 @@ function MeetingPrepModal(p) {
       // MACRO RESUMO
       if (results.macroShort) {
         drawSectionTitle("Cenário Macro", "Resumo executivo dos principais indicadores");
-        renderStructuredText(results.macroShort, {bodySize:10, leading:5.2});
-        y += 6;
+        renderStructuredText(results.macroShort, {bodySize:10, leading:6.2});
+        y += 10;
       }
 
       // MACRO DETALHADO
       if (results.macroDetail) {
-        if (results.macroShort) y += 4;
+        if (results.macroShort) y += 6;
         drawSectionTitle("Cenário Macro · Detalhado", "Análise aprofundada por dimensão");
-        renderStructuredText(results.macroDetail, {bodySize:9.5, leading:4.8});
-        y += 6;
+        renderStructuredText(results.macroDetail, {bodySize:9.5, leading:5.8});
+        y += 10;
       }
 
       // EMPRESAS
       if (Object.keys(results.empresas).length > 0) {
-        y += 4;
+        y += 6;
         drawSectionTitle("Empresas em Foco", Object.keys(results.empresas).length + " ativos selecionados para esta conversa");
 
         Object.keys(results.empresas).forEach(function(tk, idx) {
@@ -2380,20 +2384,49 @@ function MeetingPrepModal(p) {
           var summary = e.summary || "";
           if (!summary.trim()) return;
 
-          // Estimate card height (rough: 7 per line)
-          var estLines = wrap(summary, CW-10, 9.5).length;
-          var cardHeight = 14 + (estLines * 4.8) + 8;
-          chk(cardHeight);
+          // Strategy: render content first to measure, then draw card behind it
+          // Step 1: Pre-flight measure the content
+          var innerPad = 7;
+          var innerLeading = 5.5;
+          var innerBodySize = 9.2;
+          var blocks = summary.split(/\n\n+/);
+          var estHeight = 0;
+          blocks.forEach(function(block, bi) {
+            var lns = block.split("\n");
+            lns.forEach(function(rawLine, lineIdx) {
+              var line = rawLine.replace(/\s+$/,"");
+              if (!line.trim()) { estHeight += innerLeading*0.6; return; }
+              if (isSectionHeader(line)) {
+                if (!(bi===0 && lineIdx===0)) estHeight += 2;
+                estHeight += 7;
+                return;
+              }
+              if (isBullet(line)) {
+                var bText = line.trim().replace(/^[•\-\*]\s*/,"");
+                var wrappedB = wrap(bText, CW-innerPad*2-6, innerBodySize);
+                estHeight += wrappedB.length * innerLeading + 1.2;
+                return;
+              }
+              var wrapped = wrap(line, CW-innerPad*2, innerBodySize);
+              estHeight += wrapped.length * innerLeading;
+            });
+            if (bi < blocks.length - 1) estHeight += 4.5;
+          });
+
+          var headerHeight = 11; // ticker + company name row
+          var bottomPad = 8;
+          var cardHeight = headerHeight + estHeight + bottomPad;
+
+          chk(cardHeight + 4);
 
           var cardTop = y;
           // Card background
-          setF(CLR.cardBg); doc.roundedRect(ML, cardTop, CW, cardHeight, 2, 2, "F");
-          setD(CLR.hairline); doc.roundedRect(ML, cardTop, CW, cardHeight, 2, 2, "S");
+          setF(CLR.cardBg); doc.roundedRect(ML, cardTop, CW, cardHeight, 2.5, 2.5, "F");
+          setD(CLR.hairline); doc.roundedRect(ML, cardTop, CW, cardHeight, 2.5, 2.5, "S");
           // Left accent bar
-          setF(CLR.accent); doc.rect(ML, cardTop, 1.2, cardHeight, "F");
+          setF(CLR.accent); doc.rect(ML, cardTop, 1.5, cardHeight, "F");
 
           // Ticker header
-          var innerPad = 6;
           doc.setFontSize(13); doc.setFont("helvetica","bold"); setC(CLR.dark);
           doc.text(tk, ML+innerPad, cardTop+9);
 
@@ -2401,24 +2434,25 @@ function MeetingPrepModal(p) {
           var appStock = allAppStocks.find(function(s){return s.ticker===tk;});
           if (appStock && appStock.name) {
             doc.setFontSize(8); doc.setFont("helvetica","normal"); setC(CLR.muted);
-            doc.text(appStock.name, ML+innerPad+doc.getTextWidth(tk)+3, cardTop+9);
+            doc.text(appStock.name, ML+innerPad+doc.getTextWidth(tk)+4, cardTop+9);
           }
 
-          // Render the summary with indent inside card
-          y = cardTop + 14;
-          var savedML = ML;
-          // Temporarily reduce effective width via bodySize smaller leading for cards
-          var innerText = summary;
-          renderStructuredText(innerText, {bodySize:9, leading:4.5, indent:innerPad});
-          y = cardTop + cardHeight + 4;
+          // Thin separator below ticker header
+          setD(CLR.hairline); doc.setLineWidth(0.15);
+          doc.line(ML+innerPad, cardTop+11.5, ML+CW-innerPad, cardTop+11.5);
+
+          // Render summary inside card
+          y = cardTop + headerHeight + 4;
+          renderStructuredText(summary, {bodySize:innerBodySize, leading:innerLeading, indent:innerPad});
+          y = cardTop + cardHeight + 7; // bigger gap between cards
         });
       }
 
       // TALKING POINTS
       if (results.talkPoints) {
-        y += 4;
+        y += 6;
         drawSectionTitle("Roteiro de Conversa", "Estrutura sugerida para conduzir a reunião");
-        renderStructuredText(results.talkPoints, {bodySize:10, leading:5.2});
+        renderStructuredText(results.talkPoints, {bodySize:10, leading:6.2});
       }
 
       // ═══════════════════════════════════════════════════════
