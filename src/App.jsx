@@ -2209,13 +2209,25 @@ function MeetingPrepModal(p) {
       function isSectionHeader(line) {
         var trimmed = line.trim();
         if (trimmed.length < 3 || trimmed.length > 70) return false;
-        var labelMatch = trimmed.match(/^([A-ZÀ-ÝÇ][A-ZÀ-ÝÇ\s]{2,40}):/);
+        // Se tem ":" seguido de conteúdo, é uma linha de dado (tipo "SELIC: 10.5%"), NÃO é header
+        var colonIdx = trimmed.indexOf(":");
+        if (colonIdx > 0 && colonIdx < trimmed.length - 2) return false;
+        // Rótulo puro terminando em ":" (ex: "BRASIL:")
+        var labelMatch = trimmed.match(/^([A-ZÀ-ÝÇ][A-ZÀ-ÝÇ\s]{2,40}):$/);
         if (labelMatch) return true;
+        // Linha inteira em caixa alta (ex: "BRASIL", "CENARIO GLOBAL")
         var letters = trimmed.replace(/[^A-Za-zÀ-ÿÇç]/g, "");
         if (letters.length < 3) return false;
         var uppers = letters.replace(/[^A-ZÀ-ÝÇ]/g, "");
         var ratio = uppers.length / letters.length;
         return ratio > 0.85;
+      }
+      // Detecta linhas de dado/indicador (ex: "SELIC: 10,50% subindo para 11,25%")
+      function isDataLine(line) {
+        var trimmed = line.trim();
+        var m = trimmed.match(/^([A-ZÀ-ÝÇ][A-ZÀ-ÝÇ]{1,20}):\s+(.+)/);
+        return m ? { label: m[1], value: m[2] } : null;
+      }
       }
       function isBullet(line) {
         var t = line.trim();
@@ -2245,6 +2257,32 @@ function MeetingPrepModal(p) {
               doc.setFont("helvetica","normal");
               return;
             }
+            // Linha de dado "LABEL: valor" (ex: "SELIC: 10,5% subindo")
+            var dataLine = isDataLine(line);
+            if (dataLine) {
+              chk(leading+2);
+              // Red dot
+              setF(CLR.bullet);
+              doc.circle(ML+indent+1.8, y-1.4, 0.85, "F");
+              // Bold label
+              doc.setFontSize(bodySize); doc.setFont("helvetica","bold"); setC(CLR.dark);
+              doc.text(dataLine.label + ":", ML+indent+6, y);
+              var labelW = doc.getTextWidth(dataLine.label + ": ");
+              // Value in normal weight, wrapped
+              doc.setFont("helvetica","normal"); setC(CLR.body);
+              var availW = CW - indent - 6 - labelW;
+              var valueLines = wrap(dataLine.value, availW, bodySize);
+              doc.text(valueLines[0] || "", ML+indent+6+labelW, y);
+              y += leading;
+              for (var vi = 1; vi < valueLines.length; vi++) {
+                chk(leading);
+                doc.setFontSize(bodySize); doc.setFont("helvetica","normal"); setC(CLR.body);
+                doc.text(valueLines[vi], ML+indent+6, y);
+                y += leading;
+              }
+              y += 1.5;
+              return;
+            }
             // Bullet
             if (isBullet(line)) {
               var bText = line.trim().replace(/^[•\-\*]\s*/,"");
@@ -2252,7 +2290,6 @@ function MeetingPrepModal(p) {
               wrappedB.forEach(function(bl, bIdx) {
                 chk(leading+1);
                 if (bIdx===0) {
-                  // Filled red dot
                   setF(CLR.bullet);
                   doc.circle(ML+indent+1.8, y-1.4, 0.85, "F");
                 }
@@ -2260,7 +2297,6 @@ function MeetingPrepModal(p) {
                 doc.text(bl, ML+indent+6, y);
                 y += leading;
               });
-              // Extra spacing after each bullet
               y += 1.2;
               return;
             }
@@ -2279,13 +2315,13 @@ function MeetingPrepModal(p) {
 
       // Section title (big, with accent underline)
       function drawSectionTitle(title, subtitle) {
-        chk(28);
+        chk(32);
         doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
         doc.text("— SEÇÃO", ML, y);
-        y += 5;
+        y += 8;
         doc.setFontSize(18); doc.setFont("helvetica","bold"); setC(CLR.dark);
         doc.text(title, ML, y);
-        y += 2.5;
+        y += 3.5;
         // Accent underline
         setF(CLR.accent); doc.rect(ML, y, 20, 0.9, "F");
         y += 6;
@@ -2454,12 +2490,16 @@ function MeetingPrepModal(p) {
           // Ticker header
           doc.setFontSize(13); doc.setFont("helvetica","bold"); setC(CLR.dark);
           doc.text(tk, ML+innerPad, cardTop+9);
+          var tickerWidth = doc.getTextWidth(tk);
 
           // Lookup company name from app data
           var appStock = allAppStocks.find(function(s){return s.ticker===tk;});
           if (appStock && appStock.name) {
-            doc.setFontSize(8); doc.setFont("helvetica","normal"); setC(CLR.muted);
-            doc.text(appStock.name, ML+innerPad+doc.getTextWidth(tk)+4, cardTop+9);
+            // Bullet separator (small gray dot) + nome
+            setF(CLR.muted);
+            doc.circle(ML+innerPad+tickerWidth+4, cardTop+7.5, 0.5, "F");
+            doc.setFontSize(9); doc.setFont("helvetica","normal"); setC(CLR.muted);
+            doc.text(appStock.name, ML+innerPad+tickerWidth+8, cardTop+9);
           }
 
           // Thin separator below ticker header
