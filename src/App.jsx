@@ -2067,12 +2067,12 @@ function MeetingPrepModal(p) {
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com EXATAMENTE dois campos: {"macroShort": "string aqui", "macroDetail": "string aqui"}\n'
               + 'IMPORTANTE: As chaves sao EXATAMENTE "macroShort" e "macroDetail" em camelCase. Ambas sao STRINGS simples (nao objetos nem arrays).\n\n'
-              + 'FORMATO DO macroShort (string unica, exatos 4 bullets de 1-2 linhas cada):\n'
-              + 'SELIC: [nivel atual extraido dos relatorios] + direcao esperada + proxima decisao Copom\n'
-              + 'INFLACAO: [IPCA 12m dos relatorios] + tendencia + distancia da meta\n'
-              + 'CAMBIO: [USD/BRL dos relatorios] + principais drivers + range projetado\n'
-              + 'BOLSA: [Ibov dos relatorios] + fluxo + valuation vs historico\n\n'
-              + 'Cada bullet deve ter numero concreto extraido dos relatorios. Max 25 palavras por bullet.\n\n'
+              + 'FORMATO DO macroShort — OBRIGATORIAMENTE 4 linhas separadas por \\n (quebra de linha real no JSON).\n'
+              + 'Cada linha comeca com um LABEL em caixa alta seguido de dois pontos, depois o conteudo. As 4 linhas sao EXATAMENTE nesta ordem e formato:\n\n'
+              + 'SELIC: [nivel atual] + direcao esperada + proxima decisao Copom\\nINFLACAO: [IPCA 12m] + tendencia + distancia da meta\\nCAMBIO: [USD/BRL] + principais drivers + range projetado\\nBOLSA: [Ibov] + fluxo + valuation vs historico\n\n'
+              + 'IMPORTANTE: use \\n (com barra invertida + n) para separar as 4 linhas dentro da string JSON. NAO emende tudo em um paragrafo. NAO esqueca o \\n entre cada linha. Max 30 palavras por linha.\n'
+              + 'Exemplo CORRETO (observe os \\n):\n'
+              + '"macroShort": "SELIC: 14,75% com tendencia de queda gradual apos Copom manter em outubro.\\nINFLACAO: IPCA 12m em 4,2% cedendo rumo a meta de 3%.\\nCAMBIO: USD/BRL 5,15 pressionado por carry trade favoravel.\\nBOLSA: Ibov 135k com earnings yield atrativo vs DI."\n\n'
               + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.\n\n'
               + 'FORMATO DO macroDetail (string unica com 3 secoes densas separadas por \\n\\n):\n\n'
               + 'BRASIL\n[Analise de 5-7 frases cobrindo: atividade economica (IBC-Br, PIB), inflacao (IPCA, nucleos), politica monetaria (Selic, Copom), fiscal. Use numeros concretos dos relatorios.]\n\n'
@@ -2110,6 +2110,20 @@ function MeetingPrepModal(p) {
             }
             if (!res.macroDetail && mP) {
               res.macroDetail = cleanCitations(toStr(mP.macro_detail || mP.detalhado || mP.detail || mP.macroDetalhado || mP["macro-detail"])) || null;
+            }
+            // BLINDAGEM: macroShort DEVE ter 4 labels em linhas separadas (SELIC, INFLACAO, CAMBIO, BOLSA).
+            // Se a IA emendou tudo em parágrafo, forçamos a quebra antes de cada label.
+            if (res.macroShort) {
+              var ms = res.macroShort;
+              // Insere \n antes de cada label (se não estiver no início da string)
+              ms = ms.replace(/\s+(SELIC:)/g, "\n$1");
+              ms = ms.replace(/\s+(INFLA[CÇ][AÃ]O:)/g, "\n$1");
+              ms = ms.replace(/\s+(C[AÂ]MBIO:)/g, "\n$1");
+              ms = ms.replace(/\s+(BOLSA:)/g, "\n$1");
+              // Remove linhas vazias repetidas
+              ms = ms.replace(/\n\s*\n/g, "\n").replace(/^\s+|\s+$/g, "");
+              res.macroShort = ms;
+              console.log("[macro] macroShort apos normalizacao:", ms.slice(0, 400));
             }
             // Warnings se ainda vazio
             if (wantMacroShort && !res.macroShort) {
@@ -2160,18 +2174,57 @@ function MeetingPrepModal(p) {
             });
             try {
               var eSysPrompt = "Voce e um consultor CNPI senior preparando briefing para um colega. "
-                + "Para CADA empresa, retorne um resumo ESTRUTURADO em 4 blocos curtos, separados por \\n\\n dentro da string summary:\\n\\n"
+                + "Para CADA empresa recebida, retorne um resumo ESTRUTURADO em 4 blocos curtos, separados por \\n\\n dentro da string summary:\\n\\n"
                 + "TESE EM UMA LINHA\n[Uma frase de ate 20 palavras explicando a tese central]\n\n"
                 + "DESTAQUES DO ULTIMO RESULTADO\n- [ponto 1 com numero]\n- [ponto 2 com numero]\n- [ponto 3 com numero]\n\n"
                 + "PONTOS DE ATENCAO\n- [risco/fraqueza 1]\n- [risco/fraqueza 2]\n\n"
                 + "VISAO SUNO E ACAO\n[Uma frase sobre preco-teto, margem de seguranca e o que dizer ao cliente]\n\n"
-                + "Use numeros concretos (percentuais, R$, multiplos). Retorne APENAS JSON puro: "
-                + '[{\"ticker\":\"XXXX3\",\"summary\":\"texto estruturado como UMA STRING com \\\\n\\\\n\"}]. '
-                + "Sem markdown, sem ```, cada summary e UMA STRING. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.";
+                + "Use numeros concretos (percentuais, R$, multiplos). "
+                + "IMPORTANTE: retorne APENAS um ARRAY JSON puro (comecando com [ e terminando com ]), nunca um objeto avulso. Formato EXATO: "
+                + '[{"ticker":"XXXX3","summary":"texto..."},{"ticker":"YYYY4","summary":"texto..."}]. '
+                + "Sem markdown, sem ```, sem preambulo. Cada summary e UMA STRING com \\n\\n entre os blocos. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.";
               var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:eSysPrompt,messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
-              if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(toStr(e.summary))};}); }
-            } catch(ee) { console.error("Emp err:", ee); warnings.push("empresas"); }
+              console.log("[empresas] batch " + (eb/3+1) + " IA raw (400 chars):", eRaw ? eRaw.slice(0, 400) : "(vazio)");
+              if (eRaw) {
+                var eP = safeParseJSON(eRaw);
+                console.log("[empresas] parsed tipo:", Array.isArray(eP) ? "array(" + eP.length + ")" : (eP ? "objeto keys=" + Object.keys(eP).join(",") : "null"));
+                // Normalizar: IA pode devolver array diretamente OU objeto com chave "empresas"/"companies"/"items"
+                var eList = null;
+                if (Array.isArray(eP)) {
+                  eList = eP;
+                } else if (eP && typeof eP === "object") {
+                  eList = eP.empresas || eP.companies || eP.items || eP.results || null;
+                  // Ou pode ser um objeto com ticker-key (ex: {"VALE3": {...}, "PETR4": {...}})
+                  if (!eList) {
+                    var possibleTickers = Object.keys(eP);
+                    if (possibleTickers.length > 0 && eP[possibleTickers[0]] && typeof eP[possibleTickers[0]] === "object" && (eP[possibleTickers[0]].summary || eP[possibleTickers[0]].text)) {
+                      eList = possibleTickers.map(function(tk){ return Object.assign({ticker: tk}, eP[tk]); });
+                    }
+                  }
+                }
+                if (eList && eList.length > 0) {
+                  eList.forEach(function(e){
+                    if (e && e.ticker) {
+                      res.empresas[e.ticker] = {ticker: e.ticker, summary: cleanCitations(toStr(e.summary || e.text || e.content))};
+                    }
+                  });
+                } else {
+                  warnings.push("empresas batch " + (eb/3+1) + " sem array valido");
+                }
+              } else {
+                warnings.push("empresas batch " + (eb/3+1) + " resposta vazia");
+              }
+            } catch(ee) {
+              console.error("Empresas err batch " + (eb/3+1) + ":", ee);
+              console.error("Empresas err stack:", ee.stack);
+              var eErrMsg = ee.message || String(ee);
+              if (eErrMsg.indexOf("timeout") >= 0 || eErrMsg.indexOf("504") >= 0) {
+                warnings.push("empresas timeout no batch " + (eb/3+1));
+              } else {
+                warnings.push("empresas: " + eErrMsg.slice(0, 80));
+              }
+            }
           }
         }
       }
