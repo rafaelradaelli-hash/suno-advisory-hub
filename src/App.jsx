@@ -2029,16 +2029,34 @@ function MeetingPrepModal(p) {
         setGenProgress("Gerando cenario macro...");
         try {
           var mPrompt = hasMacroCtx
-            ? "Contexto macro Suno:\n" + macroText.slice(0,3000) + "\n\n"
-            : "Sem relatorios macro salvos. Use cenario Brasil atual.\n\n";
+            ? "CONTEXTO MACRO SUNO (use como base primaria):\n" + macroText.slice(0,3000) + "\n\n"
+            : "Sem relatorios macro salvos. Use cenario Brasil atual de sua base.\n\n";
           if (wantMacroShort && wantMacroDetail) {
-            mPrompt += 'Gere JSON: {"macroShort":"3-4 bullets curtos (Selic, inflacao, cambio, bolsa)","macroDetail":"3 paragrafos detalhados"} JSON puro.';
+            mPrompt += 'Gere JSON com DOIS campos: {"macroShort":"...","macroDetail":"..."}\n\n'
+              + 'FORMATO DO macroShort (string unica, exatos 4 bullets com emoji, um por linha):\n'
+              + '📊 Selic: [nivel atual] + direcao esperada + impacto\n'
+              + '💰 Inflacao: [IPCA 12m] + tendencia + meta\n'
+              + '💵 Cambio: [USD/BRL] + drivers + cenario\n'
+              + '📈 Bolsa: [Ibov nivel] + fluxo + valuation\n\n'
+              + 'FORMATO DO macroDetail (string unica com 3 secoes separadas por \\n\\n):\n'
+              + 'BRASIL\n[Paragrafo de 3-4 frases sobre ciclo de juros, atividade, fiscal, com numeros]\n\n'
+              + 'CENARIO GLOBAL\n[Paragrafo de 3-4 frases sobre Fed, China, tensoes geopoliticas, commodities]\n\n'
+              + 'IMPLICACOES PARA PORTFOLIO\n[Paragrafo de 3-4 frases conectando macro com decisoes de alocacao]';
           } else if (wantMacroShort) {
-            mPrompt += 'Gere JSON: {"macroShort":"3-4 bullets curtos sobre Selic, inflacao, cambio, bolsa"} JSON puro.';
+            mPrompt += 'Gere JSON: {"macroShort":"..."}\n\n'
+              + 'FORMATO (string unica, exatos 4 bullets com emoji, um por linha):\n'
+              + '📊 Selic: [nivel atual] + direcao esperada + impacto\n'
+              + '💰 Inflacao: [IPCA 12m] + tendencia + meta\n'
+              + '💵 Cambio: [USD/BRL] + drivers + cenario\n'
+              + '📈 Bolsa: [Ibov nivel] + fluxo + valuation';
           } else {
-            mPrompt += 'Gere JSON: {"macroDetail":"3 paragrafos detalhados sobre economia BR, global, perspectivas"} JSON puro.';
+            mPrompt += 'Gere JSON: {"macroDetail":"..."}\n\n'
+              + 'FORMATO (string unica com 3 secoes separadas por \\n\\n):\n'
+              + 'BRASIL\n[Paragrafo de 3-4 frases sobre ciclo de juros, atividade, fiscal, com numeros concretos]\n\n'
+              + 'CENARIO GLOBAL\n[Paragrafo de 3-4 frases sobre Fed, China, tensoes geopoliticas, commodities]\n\n'
+              + 'IMPLICACOES PARA PORTFOLIO\n[Paragrafo de 3-4 frases conectando macro com decisoes de alocacao]';
           }
-          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Voce e um consultor financeiro CNPI experiente escrevendo para outro consultor. Use linguagem tecnica de research institucional (Selic, inflacao, DI, NTN-B, premio de risco, etc). Retorne APENAS JSON puro, sem markdown, sem ```. Cada campo deve ser uma STRING de texto (nao array).",messages:[{role:"user",content:mPrompt}]});
+          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Voce e um economista-chefe de buy-side escrevendo para a mesa de consultores CNPI. Use linguagem tecnica e objetiva (Selic, DI, NTN-B, premio de risco, CDS, earnings yield, etc) com numeros concretos. Seja direto e acionavel. Retorne APENAS JSON puro, sem markdown, sem ```, sem preambulo. Todos os campos devem ser STRINGS (nao arrays, nao objetos).",messages:[{role:"user",content:mPrompt}]});
           var mRaw = extractText(mD.content);
           if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(toStr(mP.macroShort))||null; res.macroDetail = cleanCitations(toStr(mP.macroDetail))||null; }
         } catch(me) { console.error("Macro err:", me); warnings.push("macro (" + me.message.slice(0,80) + ")"); }
@@ -2048,15 +2066,36 @@ function MeetingPrepModal(p) {
       if (wantEmpresas) {
         var eTickers = Object.keys(selectedEmpresas);
         if (eTickers.length > 0) {
-          for (var eb = 0; eb < eTickers.length; eb += 4) {
-            var eBatch = eTickers.slice(eb, eb + 4);
+          for (var eb = 0; eb < eTickers.length; eb += 3) {
+            var eBatch = eTickers.slice(eb, eb + 3);
             setGenProgress("Analisando " + eBatch.join(", ") + "...");
             var eCtx = eBatch.map(function(tk) {
               var app = allAppStocks.find(function(s){return s.ticker===tk;});
-              return {ticker:tk, result: app ? (app.result||"").slice(0,200) : "", sentiment: app ? app.sentiment : "neutral"};
+              if (!app) return {ticker:tk, naoEncontrada:true};
+              return {
+                ticker: tk,
+                nome: app.name || "",
+                carteira: app._portfolio || "",
+                sentiment: app.sentiment || "neutral",
+                rankScore: app.rankScore || null,
+                thesis: (app.thesis || "").slice(0,400),
+                resultado: (app.result || "").slice(0,400),
+                resultadoPros: (app.resultPros || []).slice(0,4),
+                resultadoCons: (app.resultCons || []).slice(0,4),
+                sunoView: (app.sunoView || "").slice(0,400)
+              };
             });
             try {
-              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Voce e um consultor CNPI preparando briefing para outro consultor. Para cada empresa, escreva 1 paragrafo objetivo com linguagem tecnica (cite numeros, multiplos, guidance quando disponivel). Retorne APENAS JSON puro no formato: [{\"ticker\":\"XXXX3\",\"summary\":\"texto do paragrafo como STRING\"}]. Sem markdown, sem ```, cada summary deve ser uma STRING.",messages:[{role:"user",content:JSON.stringify(eCtx)}]});
+              var eSysPrompt = "Voce e um consultor CNPI senior preparando briefing para um colega. "
+                + "Para CADA empresa, retorne um resumo ESTRUTURADO em 4 blocos curtos, separados por \\n\\n dentro da string summary:\\n\\n"
+                + "📌 TESE EM UMA LINHA\\n[Uma frase de ate 20 palavras explicando a tese central]\\n\\n"
+                + "✅ DESTAQUES DO ULTIMO RESULTADO\\n• [ponto 1 com numero]\\n• [ponto 2 com numero]\\n• [ponto 3 com numero]\\n\\n"
+                + "⚠️ PONTOS DE ATENCAO\\n• [risco/fraqueza 1]\\n• [risco/fraqueza 2]\\n\\n"
+                + "🎯 VISAO SUNO E ACAO\\n[Uma frase sobre preco-teto, margem de seguranca e o que dizer ao cliente]\\n\\n"
+                + "Use numeros concretos (percentuais, R$, multiplos). Retorne APENAS JSON puro: "
+                + '[{\"ticker\":\"XXXX3\",\"summary\":\"texto estruturado como UMA STRING com \\\\n\\\\n\"}]. '
+                + "Sem markdown, sem ```, cada summary e UMA STRING.";
+              var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:eSysPrompt,messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
               if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(toStr(e.summary))};}); }
             } catch(ee) { console.error("Emp err:", ee); warnings.push("empresas"); }
@@ -2068,10 +2107,16 @@ function MeetingPrepModal(p) {
       if (wantTalkPoints) {
         setGenProgress("Gerando talking points...");
         try {
-          var tMsg = "Cliente: " + profileCtx + posCtx + "\nFoco: " + (meetingFocus || "trimestral");
-          if (res.macroShort) tMsg += "\nMacro: " + res.macroShort.slice(0,500);
-          tMsg += '\n\nGere 5-7 talking points personalizados para abrir/conduzir a reuniao com este cliente. Retorne JSON no formato exato: {"talkPoints":"- primeiro ponto\\n- segundo ponto\\n- terceiro ponto"}. O valor de talkPoints deve ser UMA STRING UNICA com bullets separados por \\n. Nao use arrays.';
-          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:1500,system:"Voce e um consultor CNPI experiente ajudando outro consultor a estruturar a conversa com o cliente. Use linguagem profissional mas conversacional. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser uma STRING (nao array).",messages:[{role:"user",content:tMsg}]});
+          var tMsg = "CLIENTE: " + profileCtx + posCtx + "\nFOCO DA REUNIAO: " + (meetingFocus || "revisao trimestral");
+          if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
+          tMsg += '\n\nGere um roteiro de conversa ESTRUTURADO em 4 blocos, separados por \\n\\n dentro da string talkPoints:\n\n'
+            + '🎯 ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
+            + '📊 PONTOS PRINCIPAIS A APRESENTAR\n• [tema 1 - frase especifica para este cliente]\n• [tema 2]\n• [tema 3]\n• [tema 4]\n\n'
+            + '❓ PERGUNTAS PARA FAZER AO CLIENTE\n• [pergunta aberta sobre perfil/objetivos]\n• [pergunta sobre tolerancia/liquidez]\n\n'
+            + '✅ PROXIMOS PASSOS SUGERIDOS\n• [acao concreta 1]\n• [acao concreta 2]\n\n'
+            + 'Personalize TUDO com base nos dados do cliente (idade, perfil de risco, horizonte, ativos em carteira). '
+            + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```.';
+          var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Voce e um consultor CNPI senior com 20 anos de experiencia. Esta ajudando um colega a estruturar a conversa com o cliente dele. Use linguagem profissional, consultiva e orientada a acao. Cada ponto deve ser PERSONALIZADO com base nos dados do cliente — nao use generalidades. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser UMA STRING (nao array).",messages:[{role:"user",content:tMsg}]});
           var tRaw = extractText(tD.content);
           if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(toStr(tP.talkPoints))||null; }
         } catch(te) { console.error("TP err:", te); warnings.push("talking points (" + te.message.slice(0,80) + ")"); }
@@ -2083,55 +2128,319 @@ function MeetingPrepModal(p) {
     setGenerating(false); setGenProgress("");
   }
 
-  // ── PDF Export ──
+  // ── PDF Export (Premium Layout) ──
   function generateMeetingPDF() {
     setPdfGenerating(true);
     try {
       var doc = new jsPDF({orientation:"portrait",unit:"mm",format:"a4"});
-      var W=210;var H=297;var ML=24;var MR=20;var CW=W-ML-MR;
+      var W=210, H=297;
+      var ML=22, MR=22, MT=24, MB=22;
+      var CW=W-ML-MR;
+
+      // Color palette
+      var CLR = {
+        accent: [180,40,40],      // Suno red
+        accentLight: [240,222,222],
+        dark: [24,24,27],         // near-black for titles
+        body: [55,55,63],         // body text
+        muted: [130,130,140],     // labels/meta
+        hairline: [230,230,232],  // separators
+        cardBg: [250,250,252],    // card fill
+        bullet: [180,40,40]
+      };
+
       function setC(c){doc.setTextColor(c[0],c[1],c[2]);}
       function setF(c){doc.setFillColor(c[0],c[1],c[2]);}
+      function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
       function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
+
+      // Header/footer decorators (called on each content page)
+      function drawPageFrame(pageNum, totalPages) {
+        // Top accent bar
+        setF(CLR.accent); doc.rect(0,0,W,1.2,"F");
+        // Header meta
+        doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+        doc.text("SUNO ADVISORY HUB", ML, 10);
+        doc.setFont("helvetica","normal"); setC(CLR.muted);
+        var headerRight = (selectedProfile ? selectedProfile.name : "") + "  ·  " + meetingDate;
+        doc.text(headerRight, W-MR, 10, {align:"right"});
+        // Hairline below header
+        setD(CLR.hairline); doc.setLineWidth(0.2);
+        doc.line(ML, 13, W-MR, 13);
+        // Footer
+        setD(CLR.hairline); doc.line(ML, H-14, W-MR, H-14);
+        doc.setFontSize(7); doc.setFont("helvetica","normal"); setC(CLR.muted);
+        doc.text("Briefing de Reunião", ML, H-9);
+        if (pageNum && totalPages) doc.text(pageNum + " / " + totalPages, W-MR, H-9, {align:"right"});
+        // Bottom accent
+        setF(CLR.accent); doc.rect(0,H-1.2,W,1.2,"F");
+      }
+
       var y=0;
-      function chk(n){if(y+n>H-16){doc.addPage();setF([180,40,40]);doc.rect(0,0,W,0.5,"F");y=18;return true;}return false;}
+      function chk(n){
+        if(y+n > H-MB-4){
+          doc.addPage();
+          drawPageFrame(); // will be renumbered at the end
+          y=MT;
+          return true;
+        }
+        return false;
+      }
 
-      // Cover
-      setF([180,40,40]);doc.rect(0,0,W,1,"F");
-      doc.setFontSize(8);doc.setFont("helvetica","bold");setC([140,140,140]);doc.text("SUNO ADVISORY HUB",ML,46);
-      doc.setFontSize(30);setC([30,30,30]);doc.text("Preparo de",ML,68);doc.text("Reunião",ML,82);
-      doc.setFontSize(10);doc.setFont("helvetica","normal");setC([100,100,100]);
-      doc.text((selectedProfile?selectedProfile.name:"") + " — " + meetingDate,ML,98);
-      if(meetingFocus)doc.text("Foco: " + meetingFocus,ML,106);
-      setF([180,40,40]);doc.rect(0,H-1,W,1,"F");
+      // Render a line that starts with emoji + TITLE as a sub-header
+      function isSectionHeader(line) {
+        // Matches: starts with emoji (🎯📌✅⚠️📊💰💵📈❓) followed by space + uppercase text
+        return /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}]\s+[A-ZÀ-Ý]/u.test(line.trim());
+      }
+      function isBullet(line) {
+        var t = line.trim();
+        return t.startsWith("•") || t.startsWith("- ") || t.startsWith("* ");
+      }
 
-      // Content pages
-      doc.addPage();setF([180,40,40]);doc.rect(0,0,W,0.5,"F");y=18;
+      // Render a block of text with smart formatting: detects section headers and bullets
+      function renderStructuredText(text, opts) {
+        opts = opts || {};
+        var bodySize = opts.bodySize || 9.5;
+        var leading = opts.leading || 4.8;
+        var indent = opts.indent || 0;
+        var blocks = (text || "").split(/\n\n+/);
+        blocks.forEach(function(block, bi) {
+          var lines = block.split("\n");
+          lines.forEach(function(rawLine) {
+            var line = rawLine.replace(/\s+$/,"");
+            if (!line.trim()) { y += leading*0.5; return; }
+            // Section header inside a block (emoji + caps)
+            if (isSectionHeader(line)) {
+              chk(7);
+              doc.setFontSize(8.5); doc.setFont("helvetica","bold"); setC(CLR.accent);
+              doc.text(line, ML+indent, y);
+              y += 5.2;
+              doc.setFont("helvetica","normal");
+              return;
+            }
+            // Bullet
+            if (isBullet(line)) {
+              var bText = line.trim().replace(/^[•\-\*]\s*/,"");
+              var wrappedB = wrap(bText, CW-indent-5, bodySize);
+              wrappedB.forEach(function(bl, bIdx) {
+                chk(leading+1);
+                if (bIdx===0) {
+                  // Filled red dot
+                  setF(CLR.bullet);
+                  doc.circle(ML+indent+1.5, y-1.3, 0.8, "F");
+                }
+                doc.setFontSize(bodySize); doc.setFont("helvetica","normal"); setC(CLR.body);
+                doc.text(bl, ML+indent+5, y);
+                y += leading;
+              });
+              return;
+            }
+            // Regular body line
+            var wrapped = wrap(line, CW-indent, bodySize);
+            wrapped.forEach(function(wl) {
+              chk(leading+1);
+              doc.setFontSize(bodySize); doc.setFont("helvetica","normal"); setC(CLR.body);
+              doc.text(wl, ML+indent, y);
+              y += leading;
+            });
+          });
+          if (bi < blocks.length - 1) y += 2.5; // spacing between blocks
+        });
+      }
 
-      if(results.macroShort){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("CENÁRIO MACRO — RESUMO",ML,y);y+=6;
-        doc.setFontSize(9);doc.setFont("helvetica","normal");setC([50,50,50]);
-        var msl=wrap(results.macroShort,CW,9);msl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});y+=6;}
+      // Section title (big, with accent underline)
+      function drawSectionTitle(title, subtitle) {
+        chk(22);
+        doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+        doc.text("— SEÇÃO", ML, y);
+        y += 4.5;
+        doc.setFontSize(17); doc.setFont("helvetica","bold"); setC(CLR.dark);
+        doc.text(title, ML, y);
+        y += 2;
+        // Accent underline
+        setF(CLR.accent); doc.rect(ML, y, 18, 0.8, "F");
+        y += 5;
+        if (subtitle) {
+          doc.setFontSize(9); doc.setFont("helvetica","italic"); setC(CLR.muted);
+          doc.text(subtitle, ML, y);
+          y += 6;
+        } else {
+          y += 2;
+        }
+      }
 
-      if(results.macroDetail){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("CENÁRIO MACRO — DETALHADO",ML,y);y+=6;
-        doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC([50,50,50]);
-        var mdl=wrap(results.macroDetail,CW,8.5);mdl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});y+=8;}
+      // ═══════════════════════════════════════════════════════
+      // COVER PAGE
+      // ═══════════════════════════════════════════════════════
+      // Full red top band
+      setF(CLR.accent); doc.rect(0,0,W,42,"F");
+      doc.setFontSize(9); doc.setFont("helvetica","bold"); setC([255,255,255]);
+      doc.text("SUNO ADVISORY HUB", ML, 18);
+      doc.setFontSize(7); doc.setFont("helvetica","normal");
+      doc.text("Relatório Confidencial · Uso Interno do Consultor", ML, 24);
+      // Subtle rule at bottom of band
+      setF([220,180,180]); doc.rect(ML, 35, 26, 0.5, "F");
 
-      if(Object.keys(results.empresas).length>0){chk(20);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("EMPRESAS EM FOCO",ML,y);y+=6;
-        Object.keys(results.empresas).forEach(function(tk){
-          var e=results.empresas[tk];chk(25);
-          doc.setFontSize(11);doc.setFont("helvetica","bold");setC([30,30,30]);doc.text(tk,ML,y);y+=5;
-          doc.setFontSize(8.5);doc.setFont("helvetica","normal");setC([50,50,50]);
-          var el=wrap(e.summary||"",CW-4,8.5);el.forEach(function(l){chk(4.5);doc.text(l,ML+2,y);y+=4.5;});y+=6;
-        });}
+      // Large title
+      doc.setFontSize(36); doc.setFont("helvetica","bold"); setC(CLR.dark);
+      doc.text("Preparo de", ML, 78);
+      doc.text("Reunião", ML, 94);
 
-      if(results.talkPoints){chk(30);doc.setFontSize(7);doc.setFont("helvetica","bold");setC([180,40,40]);doc.text("TALKING POINTS",ML,y);y+=6;
-        doc.setFontSize(9);doc.setFont("helvetica","normal");setC([50,50,50]);
-        var tpl=wrap(results.talkPoints,CW,9);tpl.forEach(function(l){chk(4.5);doc.text(l,ML,y);y+=4.5;});}
+      // Decorative element
+      setF(CLR.accent); doc.rect(ML, 102, 60, 1.2, "F");
 
-      // Page numbers
-      var pc=doc.internal.getNumberOfPages();for(var pg=2;pg<=pc;pg++){doc.setPage(pg);doc.setFontSize(6.5);doc.setFont("helvetica","normal");setC([175,175,175]);doc.text((pg-1)+"/"+(pc-1),W/2,H-10,{align:"center"});setF([180,40,40]);doc.rect(0,H-0.5,W,0.5,"F");}
+      // Client card
+      var cardY = 120;
+      setF(CLR.cardBg); doc.roundedRect(ML, cardY, CW, 52, 3, 3, "F");
+      setD(CLR.hairline); doc.roundedRect(ML, cardY, CW, 52, 3, 3, "S");
+      // Left accent inside card
+      setF(CLR.accent); doc.rect(ML, cardY, 1.5, 52, "F");
 
-      doc.save("reuniao-"+(selectedProfile?selectedProfile.name.replace(/\s+/g,"-").toLowerCase():"cliente")+"-"+meetingDate+".pdf");
-    } catch(err){console.error(err);alert("Erro PDF: "+err.message);}
+      doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+      doc.text("CLIENTE", ML+8, cardY+10);
+      doc.setFontSize(16); doc.setFont("helvetica","bold"); setC(CLR.dark);
+      doc.text(selectedProfile ? selectedProfile.name : "—", ML+8, cardY+20);
+
+      // Meta
+      doc.setFontSize(8); doc.setFont("helvetica","normal"); setC(CLR.muted);
+      var metaLines = [];
+      if (selectedProfile) {
+        if (selectedProfile.age) metaLines.push(selectedProfile.age + " anos");
+        if (selectedProfile.riskProfile) metaLines.push("Perfil: " + selectedProfile.riskProfile);
+        if (selectedProfile.horizon) metaLines.push("Horizonte: " + selectedProfile.horizon + " anos");
+      }
+      if (metaLines.length) doc.text(metaLines.join("  ·  "), ML+8, cardY+28);
+
+      doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+      doc.text("DATA DA REUNIÃO", ML+8, cardY+38);
+      doc.setFontSize(10); doc.setFont("helvetica","normal"); setC(CLR.dark);
+      doc.text(meetingDate, ML+8, cardY+44);
+
+      if (meetingFocus) {
+        doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+        doc.text("FOCO", ML+80, cardY+38);
+        doc.setFontSize(10); doc.setFont("helvetica","normal"); setC(CLR.dark);
+        var focusLines = wrap(meetingFocus, CW-90, 10);
+        focusLines.slice(0,2).forEach(function(l, i){ doc.text(l, ML+80, cardY+44+(i*4)); });
+      }
+
+      // Table of contents
+      var tocY = cardY + 72;
+      doc.setFontSize(7); doc.setFont("helvetica","bold"); setC(CLR.accent);
+      doc.text("CONTEÚDO DESTE BRIEFING", ML, tocY);
+      tocY += 7;
+      doc.setFontSize(10); doc.setFont("helvetica","normal"); setC(CLR.dark);
+      var tocItems = [];
+      if (results.macroShort) tocItems.push("Cenário Macro · Resumo Executivo");
+      if (results.macroDetail) tocItems.push("Cenário Macro · Análise Detalhada");
+      if (Object.keys(results.empresas).length > 0) tocItems.push("Empresas em Foco (" + Object.keys(results.empresas).length + ")");
+      if (results.talkPoints) tocItems.push("Roteiro de Conversa");
+      tocItems.forEach(function(item, i) {
+        setF(CLR.accent); doc.circle(ML+1.5, tocY-1.3, 0.9, "F");
+        doc.setFontSize(10); setC(CLR.body); doc.setFont("helvetica","normal");
+        doc.text(item, ML+6, tocY);
+        tocY += 6;
+      });
+
+      // Bottom cover band
+      setF(CLR.accent); doc.rect(0,H-1.5,W,1.5,"F");
+      doc.setFontSize(6.5); doc.setFont("helvetica","normal"); setC(CLR.muted);
+      doc.text("Gerado em " + new Date().toLocaleString("pt-BR"), ML, H-7);
+      doc.text("CONFIDENCIAL", W-MR, H-7, {align:"right"});
+
+      // ═══════════════════════════════════════════════════════
+      // CONTENT PAGES
+      // ═══════════════════════════════════════════════════════
+      doc.addPage();
+      drawPageFrame();
+      y = MT;
+
+      // MACRO RESUMO
+      if (results.macroShort) {
+        drawSectionTitle("Cenário Macro", "Resumo executivo dos principais indicadores");
+        renderStructuredText(results.macroShort, {bodySize:10, leading:5.2});
+        y += 6;
+      }
+
+      // MACRO DETALHADO
+      if (results.macroDetail) {
+        if (results.macroShort) y += 4;
+        drawSectionTitle("Cenário Macro · Detalhado", "Análise aprofundada por dimensão");
+        renderStructuredText(results.macroDetail, {bodySize:9.5, leading:4.8});
+        y += 6;
+      }
+
+      // EMPRESAS
+      if (Object.keys(results.empresas).length > 0) {
+        y += 4;
+        drawSectionTitle("Empresas em Foco", Object.keys(results.empresas).length + " ativos selecionados para esta conversa");
+
+        Object.keys(results.empresas).forEach(function(tk, idx) {
+          var e = results.empresas[tk];
+          var summary = e.summary || "";
+          if (!summary.trim()) return;
+
+          // Estimate card height (rough: 7 per line)
+          var estLines = wrap(summary, CW-10, 9.5).length;
+          var cardHeight = 14 + (estLines * 4.8) + 8;
+          chk(cardHeight);
+
+          var cardTop = y;
+          // Card background
+          setF(CLR.cardBg); doc.roundedRect(ML, cardTop, CW, cardHeight, 2, 2, "F");
+          setD(CLR.hairline); doc.roundedRect(ML, cardTop, CW, cardHeight, 2, 2, "S");
+          // Left accent bar
+          setF(CLR.accent); doc.rect(ML, cardTop, 1.2, cardHeight, "F");
+
+          // Ticker header
+          var innerPad = 6;
+          doc.setFontSize(13); doc.setFont("helvetica","bold"); setC(CLR.dark);
+          doc.text(tk, ML+innerPad, cardTop+9);
+
+          // Lookup company name from app data
+          var appStock = allAppStocks.find(function(s){return s.ticker===tk;});
+          if (appStock && appStock.name) {
+            doc.setFontSize(8); doc.setFont("helvetica","normal"); setC(CLR.muted);
+            doc.text(appStock.name, ML+innerPad+doc.getTextWidth(tk)+3, cardTop+9);
+          }
+
+          // Render the summary with indent inside card
+          y = cardTop + 14;
+          var savedML = ML;
+          // Temporarily reduce effective width via bodySize smaller leading for cards
+          var innerText = summary;
+          renderStructuredText(innerText, {bodySize:9, leading:4.5, indent:innerPad});
+          y = cardTop + cardHeight + 4;
+        });
+      }
+
+      // TALKING POINTS
+      if (results.talkPoints) {
+        y += 4;
+        drawSectionTitle("Roteiro de Conversa", "Estrutura sugerida para conduzir a reunião");
+        renderStructuredText(results.talkPoints, {bodySize:10, leading:5.2});
+      }
+
+      // ═══════════════════════════════════════════════════════
+      // PAGE NUMBERING (final pass)
+      // ═══════════════════════════════════════════════════════
+      var pc = doc.internal.getNumberOfPages();
+      // Skip cover (page 1); number content pages 1..N
+      var contentPages = pc - 1;
+      for (var pg = 2; pg <= pc; pg++) {
+        doc.setPage(pg);
+        // Clear existing footer area and redraw cleanly with correct number
+        setF([255,255,255]); doc.rect(0, H-13.5, W, 13.5, "F");
+        setD(CLR.hairline); doc.setLineWidth(0.2); doc.line(ML, H-14, W-MR, H-14);
+        doc.setFontSize(7); doc.setFont("helvetica","normal"); setC(CLR.muted);
+        doc.text("Briefing de Reunião · " + (selectedProfile ? selectedProfile.name : ""), ML, H-9);
+        doc.text((pg-1) + " / " + contentPages, W-MR, H-9, {align:"right"});
+        setF(CLR.accent); doc.rect(0,H-1.2,W,1.2,"F");
+      }
+
+      var fname = "briefing-" + (selectedProfile?selectedProfile.name.replace(/\s+/g,"-").toLowerCase():"cliente") + "-" + meetingDate + ".pdf";
+      doc.save(fname);
+    } catch(err){ console.error(err); alert("Erro PDF: " + err.message); }
     setPdfGenerating(false);
   }
 
