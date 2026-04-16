@@ -2028,16 +2028,16 @@ function MeetingPrepModal(p) {
     var warnings = [];
     try {
       var md = loadMacroData();
-      // Ordena por data descendente (mais recente primeiro) e pega os 2 mais novos
+      // Ordena por data descendente (mais recente primeiro) e pega os 5 mais novos
       var allReports = (md.macroReports || []).slice().sort(function(a,b){
         var da = new Date(a.date || 0).getTime();
         var db = new Date(b.date || 0).getTime();
         return db - da;
       });
-      var macroReports = allReports.slice(0,2);
-      // Usa ~2500 chars por relatorio para garantir que indicadores-chave cheguem no prompt
+      var macroReports = allReports.slice(0,5);
+      // 5000 chars por relatorio — captura indicadores, projecoes e analises
       var macroText = macroReports.map(function(r){
-        return "=== " + (r.title||"Relatorio") + " (" + (r.date||"sem data") + ") ===\n" + (r.text||"").slice(0,2500);
+        return "=== " + (r.title||"Relatorio") + " (" + (r.date||"sem data") + ") ===\n" + (r.text||"").slice(0,5000);
       }).join("\n\n");
       var hasMacroCtx = macroText.trim().length > 30;
       var hojeBR = new Date().toLocaleDateString("pt-BR", {day:"2-digit", month:"long", year:"numeric"});
@@ -2054,8 +2054,8 @@ function MeetingPrepModal(p) {
         try {
           var mPrompt = hasMacroCtx
             ? ("HOJE E " + hojeBR + ".\n\n"
-              + "RELATORIOS MACRO OFICIAIS DA SUNO (fonte unica de verdade):\n"
-              + macroText.slice(0,6000) + "\n\n"
+              + "RELATORIOS MACRO OFICIAIS DA SUNO (fonte unica de verdade — use TODO o conteudo abaixo):\n"
+              + macroText.slice(0,20000) + "\n\n"
               + "INSTRUCOES:\n"
               + "1) Extraia os numeros DOS RELATORIOS ACIMA — eles contem Selic, IPCA, cambio, Ibovespa, projecoes. EXTRAIA e USE esses numeros no seu output.\n"
               + "2) Tanto o macroShort quanto o macroDetail devem usar EXATAMENTE os mesmos numeros dos relatorios (ex: se relatorio diz Selic 14,75% com tendencia de queda, AMBOS os campos devem refletir isso).\n"
@@ -2065,16 +2065,18 @@ function MeetingPrepModal(p) {
             : ("HOJE E " + hojeBR + ". Sem relatorios macro salvos no sistema. Use apenas afirmacoes gerais sobre tendencia, sem citar numeros especificos de Selic, IPCA, Ibovespa ou cambio.\n\n");
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com DOIS campos: {"macroShort":"...","macroDetail":"..."}\n\n'
-              + 'FORMATO DO macroShort (string unica, exatos 4 bullets com emoji, um por linha):\n'
-              + 'SELIC: [nivel atual] + direcao esperada + impacto\n'
-              + 'INFLACAO: [IPCA 12m] + tendencia + meta\n'
-              + 'CAMBIO: [USD/BRL] + drivers + cenario\n'
-              + 'BOLSA: [Ibov nivel] + fluxo + valuation\n\n'
+              + 'FORMATO DO macroShort (string unica, exatos 4 bullets de 1-2 linhas cada):\n'
+              + 'SELIC: [nivel atual extraido dos relatorios] + direcao esperada + proxima decisao Copom\n'
+              + 'INFLACAO: [IPCA 12m dos relatorios] + tendencia + distancia da meta\n'
+              + 'CAMBIO: [USD/BRL dos relatorios] + principais drivers + range projetado\n'
+              + 'BOLSA: [Ibov dos relatorios] + fluxo + valuation vs historico\n\n'
+              + 'Cada bullet deve ter numero concreto extraido dos relatorios. Max 25 palavras por bullet.\n\n'
               + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.\n\n'
-              + 'FORMATO DO macroDetail (string unica com 3 secoes separadas por \\n\\n):\n'
-              + 'BRASIL\n[Paragrafo de 3-4 frases sobre ciclo de juros, atividade, fiscal, com numeros]\n\n'
-              + 'CENARIO GLOBAL\n[Paragrafo de 3-4 frases sobre Fed, China, tensoes geopoliticas, commodities]\n\n'
-              + 'IMPLICACOES PARA PORTFOLIO\n[Paragrafo de 3-4 frases conectando macro com decisoes de alocacao]';
+              + 'FORMATO DO macroDetail (string unica com 3 secoes densas separadas por \\n\\n):\n\n'
+              + 'BRASIL\n[Analise densa de 6-8 frases cobrindo: atividade economica (IBC-Br, PIB, setores em destaque), inflacao (IPCA, nucleos, expectativas), politica monetaria (Selic, Copom, forward guidance), fiscal e emprego. Use numeros concretos dos relatorios — percentuais, niveis, projecoes.]\n\n'
+              + 'CENARIO GLOBAL\n[Analise densa de 6-8 frases cobrindo: Fed e dot plot, inflacao US e core, China (PMI, estimulos, setor imobiliario), commodities (petroleo, metais, agricolas), tensoes geopoliticas, fluxos para EM, DXY. Use numeros dos relatorios.]\n\n'
+              + 'IMPLICACOES PARA PORTFOLIO\n[Analise densa de 6-8 frases conectando o macro com decisoes: renda fixa (duration, IPCA+, pre, NTN-B especifica), renda variavel (setores favoritos, valuation), cambio (hedge, exposicao), e recomendacoes explicitas de overweight/underweight. Seja especifico — cite ativos e taxas.]\n\n'
+              + 'IMPORTANTE: macroShort e macroDetail devem usar OS MESMOS numeros dos relatorios — a unica diferenca e o tamanho. Nao invente indicadores que nao estao nos relatorios.';
           } else if (wantMacroShort) {
             mPrompt += 'Gere JSON: {"macroShort":"..."}\n\n'
               + 'FORMATO (string unica, exatos 4 bullets com emoji, um por linha):\n'
@@ -2085,12 +2087,13 @@ function MeetingPrepModal(p) {
               + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.';
           } else {
             mPrompt += 'Gere JSON: {"macroDetail":"..."}\n\n'
-              + 'FORMATO (string unica com 3 secoes separadas por \\n\\n):\n'
-              + 'BRASIL\n[Paragrafo de 3-4 frases sobre ciclo de juros, atividade, fiscal, com numeros concretos]\n\n'
-              + 'CENARIO GLOBAL\n[Paragrafo de 3-4 frases sobre Fed, China, tensoes geopoliticas, commodities]\n\n'
-              + 'IMPLICACOES PARA PORTFOLIO\n[Paragrafo de 3-4 frases conectando macro com decisoes de alocacao]';
+              + 'FORMATO (string unica com 3 secoes densas separadas por \\n\\n):\n\n'
+              + 'BRASIL\n[Analise densa de 6-8 frases cobrindo: atividade economica (IBC-Br, PIB, setores em destaque), inflacao (IPCA, nucleos, expectativas), politica monetaria (Selic, Copom, forward guidance), fiscal e emprego. Use numeros concretos dos relatorios.]\n\n'
+              + 'CENARIO GLOBAL\n[Analise densa de 6-8 frases cobrindo: Fed e dot plot, inflacao US e core, China (PMI, estimulos, setor imobiliario), commodities (petroleo, metais, agricolas), tensoes geopoliticas, fluxos para EM, DXY. Use numeros dos relatorios.]\n\n'
+              + 'IMPLICACOES PARA PORTFOLIO\n[Analise densa de 6-8 frases conectando o macro com decisoes: renda fixa (duration, IPCA+, pre, NTN-B), renda variavel (setores favoritos, valuation), cambio (hedge), e recomendacoes explicitas de overweight/underweight. Cite ativos e taxas.]\n\n'
+              + 'Use numeros concretos extraidos dos relatorios. Nao invente.';
           }
-          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2048,system:"Voce e um economista-chefe de buy-side escrevendo para a mesa de consultores CNPI. Use linguagem tecnica e objetiva (Selic, DI, NTN-B, premio de risco, CDS, earnings yield, etc) com numeros concretos. Seja direto e acionavel. Retorne APENAS JSON puro, sem markdown, sem ```, sem preambulo. Todos os campos devem ser STRINGS (nao arrays, nao objetos).",messages:[{role:"user",content:mPrompt}]});
+          var mD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:4096,system:"Voce e um economista-chefe de buy-side escrevendo para a mesa de consultores CNPI. Use linguagem tecnica e objetiva (Selic, DI, NTN-B, premio de risco, CDS, earnings yield, spread, duration, carry, etc) com numeros concretos extraidos dos relatorios fornecidos. Seja denso, informativo e acionavel — o consultor vai usar isso numa reuniao, precisa de dados reais, nao generalidades. Retorne APENAS JSON puro, sem markdown, sem ```, sem preambulo. Todos os campos devem ser STRINGS (nao arrays, nao objetos).",messages:[{role:"user",content:mPrompt}]});
           var mRaw = extractText(mD.content);
           if (mRaw) { var mP = safeParseJSON(mRaw); res.macroShort = cleanCitations(toStr(mP.macroShort))||null; res.macroDetail = cleanCitations(toStr(mP.macroDetail))||null; }
         } catch(me) { console.error("Macro err:", me); warnings.push("macro (" + me.message.slice(0,80) + ")"); }
