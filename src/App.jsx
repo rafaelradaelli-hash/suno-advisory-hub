@@ -2228,7 +2228,7 @@ function MeetingPrepModal(p) {
         var m = trimmed.match(/^([A-ZÀ-ÝÇ][A-ZÀ-ÝÇ]{1,20}):\s+(.+)/);
         return m ? { label: m[1], value: m[2] } : null;
       }
-      }
+      
       function isBullet(line) {
         var t = line.trim();
         return t.startsWith("•") || t.startsWith("- ") || t.startsWith("* ");
