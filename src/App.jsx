@@ -2028,10 +2028,19 @@ function MeetingPrepModal(p) {
     var warnings = [];
     try {
       var md = loadMacroData();
-      var macroReports = (md.macroReports || []).slice(0,3);
-      // Keep macro context SHORT to avoid Vercel 10s timeout
-      var macroText = macroReports.map(function(r){return (r.title||"") + ": " + r.text.slice(0,800);}).join("\n");
+      // Ordena por data descendente (mais recente primeiro) e pega os 2 mais novos
+      var allReports = (md.macroReports || []).slice().sort(function(a,b){
+        var da = new Date(a.date || 0).getTime();
+        var db = new Date(b.date || 0).getTime();
+        return db - da;
+      });
+      var macroReports = allReports.slice(0,2);
+      // Usa ~2500 chars por relatorio para garantir que indicadores-chave cheguem no prompt
+      var macroText = macroReports.map(function(r){
+        return "=== " + (r.title||"Relatorio") + " (" + (r.date||"sem data") + ") ===\n" + (r.text||"").slice(0,2500);
+      }).join("\n\n");
       var hasMacroCtx = macroText.trim().length > 30;
+      var hojeBR = new Date().toLocaleDateString("pt-BR", {day:"2-digit", month:"long", year:"numeric"});
       var profileCtx = (selectedProfile.name||"") + ", " + (selectedProfile.age||"?") + " anos, " + (selectedProfile.riskProfile||"Moderado") + ", horizonte " + (selectedProfile.horizon||"?") + " anos";
       var posCtx = "";
       if (selectedProfile.posAssets) {
@@ -2044,8 +2053,11 @@ function MeetingPrepModal(p) {
         setGenProgress("Gerando cenario macro...");
         try {
           var mPrompt = hasMacroCtx
-            ? "CONTEXTO MACRO SUNO (use como base primaria):\n" + macroText.slice(0,3000) + "\n\n"
-            : "Sem relatorios macro salvos. Use cenario Brasil atual de sua base.\n\n";
+            ? ("HOJE E " + hojeBR + ".\n\n"
+              + "RELATORIOS MACRO OFICIAIS DA SUNO (fonte unica de verdade para todos os numeros):\n"
+              + macroText.slice(0,6000) + "\n\n"
+              + "REGRA ABSOLUTA: Todo numero/indicador/projecao que voce mencionar deve vir EXCLUSIVAMENTE dos relatorios acima. NUNCA use numeros de sua memoria/treinamento. Se um dado nao estiver nos relatorios, NAO o invente — omita ou use um indicador que estiver disponivel. Ignore qualquer valor que voce 'sabe' sobre Selic, IPCA, Ibovespa, cambio — use SOMENTE o que esta nos relatorios acima.\n\n")
+            : ("HOJE E " + hojeBR + ". Sem relatorios macro salvos no sistema. IMPORTANTE: nao invente numeros especificos de Selic, IPCA ou indicadores sem fonte. Use apenas afirmacoes gerais sobre tendencia quando nao tiver dados atualizados.\n\n");
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com DOIS campos: {"macroShort":"...","macroDetail":"..."}\n\n'
               + 'FORMATO DO macroShort (string unica, exatos 4 bullets com emoji, um por linha):\n'
@@ -2423,7 +2435,7 @@ function MeetingPrepModal(p) {
       // MACRO RESUMO
       if (results.macroShort) {
         drawSectionTitle("Cenário Macro", "Resumo executivo dos principais indicadores");
-        renderStructuredText(results.macroShort, {bodySize:10, leading:6.2});
+        renderStructuredText(results.macroShort, {bodySize:9.5, leading:5.8});
         y += 10;
       }
 
