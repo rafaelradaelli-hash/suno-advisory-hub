@@ -2054,10 +2054,15 @@ function MeetingPrepModal(p) {
         try {
           var mPrompt = hasMacroCtx
             ? ("HOJE E " + hojeBR + ".\n\n"
-              + "RELATORIOS MACRO OFICIAIS DA SUNO (fonte unica de verdade para todos os numeros):\n"
+              + "RELATORIOS MACRO OFICIAIS DA SUNO (fonte unica de verdade):\n"
               + macroText.slice(0,6000) + "\n\n"
-              + "REGRA ABSOLUTA: Todo numero/indicador/projecao que voce mencionar deve vir EXCLUSIVAMENTE dos relatorios acima. NUNCA use numeros de sua memoria/treinamento. Se um dado nao estiver nos relatorios, NAO o invente — omita ou use um indicador que estiver disponivel. Ignore qualquer valor que voce 'sabe' sobre Selic, IPCA, Ibovespa, cambio — use SOMENTE o que esta nos relatorios acima.\n\n")
-            : ("HOJE E " + hojeBR + ". Sem relatorios macro salvos no sistema. IMPORTANTE: nao invente numeros especificos de Selic, IPCA ou indicadores sem fonte. Use apenas afirmacoes gerais sobre tendencia quando nao tiver dados atualizados.\n\n");
+              + "INSTRUCOES:\n"
+              + "1) Extraia os numeros DOS RELATORIOS ACIMA — eles contem Selic, IPCA, cambio, Ibovespa, projecoes. EXTRAIA e USE esses numeros no seu output.\n"
+              + "2) Tanto o macroShort quanto o macroDetail devem usar EXATAMENTE os mesmos numeros dos relatorios (ex: se relatorio diz Selic 14,75% com tendencia de queda, AMBOS os campos devem refletir isso).\n"
+              + "3) A UNICA diferenca entre macroShort e macroDetail e o tamanho — short e resumido em 4 linhas, detail e desenvolvido em 3 paragrafos. Os NUMEROS sao os mesmos.\n"
+              + "4) Nao mencione dados que nao estao nos relatorios. Nao use sua memoria de treinamento para Selic, IPCA, cambio ou Ibovespa — use SOMENTE o que esta nos relatorios acima.\n"
+              + "5) Se um indicador especifico nao estiver claro nos relatorios, use outro que estiver (ex: se nao tem Ibovespa mas tem CDI, fale do CDI).\n\n")
+            : ("HOJE E " + hojeBR + ". Sem relatorios macro salvos no sistema. Use apenas afirmacoes gerais sobre tendencia, sem citar numeros especificos de Selic, IPCA, Ibovespa ou cambio.\n\n");
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com DOIS campos: {"macroShort":"...","macroDetail":"..."}\n\n'
               + 'FORMATO DO macroShort (string unica, exatos 4 bullets com emoji, um por linha):\n'
@@ -2276,11 +2281,11 @@ function MeetingPrepModal(p) {
               // Red dot
               setF(CLR.bullet);
               doc.circle(ML+indent+1.8, y-1.4, 0.85, "F");
-              // Bold label
-              doc.setFontSize(bodySize); doc.setFont("helvetica","bold"); setC(CLR.dark);
+              // Bold red label (mesma cor dos section headers do detalhado)
+              doc.setFontSize(bodySize); doc.setFont("helvetica","bold"); setC(CLR.accent);
               doc.text(dataLine.label + ":", ML+indent+6, y);
               var labelW = doc.getTextWidth(dataLine.label + ": ");
-              // Value in normal weight, wrapped
+              // Value in normal weight, black body
               doc.setFont("helvetica","normal"); setC(CLR.body);
               var availW = CW - indent - 6 - labelW;
               var valueLines = wrap(dataLine.value, availW, bodySize);
