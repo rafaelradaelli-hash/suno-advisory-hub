@@ -130,7 +130,22 @@ function makeData() {
     ]
   };
 }
-
+/* ═══ PDF TEXT SANITIZER ═══
+   Remove emojis e caracteres não-Latin1 que o jsPDF helvetica não renderiza.
+   Previne o lixo "Ø=ÜÊ" no PDF. */
+function sanitizePDFText(s) {
+  if (s === null || s === undefined) return "";
+  var str = String(s);
+  str = str.replace(/[\u{1F000}-\u{1FFFF}]/gu, "");
+  str = str.replace(/[\u{2600}-\u{27BF}]/gu, "");
+  str = str.replace(/[\u{2300}-\u{23FF}]/gu, "");
+  str = str.replace(/[\u{2B00}-\u{2BFF}]/gu, "");
+  str = str.replace(/[\u{FE00}-\u{FE0F}]/gu, "");
+  str = str.replace(/[\u{200B}-\u{200F}]/gu, "");
+  str = str.normalize("NFC");
+  str = str.replace(/[^\x09\x0A\x0D\x20-\x7E\u00A0-\u00FF]/g, "");
+  return str;
+}
 function uniqueArr(arr) { var s={}; var o=[]; for(var i=0;i<arr.length;i++){var v=arr[i]; if(v&&!s[v]){s[v]=true;o.push(v);}} return o; }
 
 function migrateStock(s) {
@@ -2034,10 +2049,11 @@ function MeetingPrepModal(p) {
           if (wantMacroShort && wantMacroDetail) {
             mPrompt += 'Gere JSON com DOIS campos: {"macroShort":"...","macroDetail":"..."}\n\n'
               + 'FORMATO DO macroShort (string unica, exatos 4 bullets com emoji, um por linha):\n'
-              + '📊 Selic: [nivel atual] + direcao esperada + impacto\n'
-              + '💰 Inflacao: [IPCA 12m] + tendencia + meta\n'
-              + '💵 Cambio: [USD/BRL] + drivers + cenario\n'
-              + '📈 Bolsa: [Ibov nivel] + fluxo + valuation\n\n'
+              + 'SELIC: [nivel atual] + direcao esperada + impacto\n'
+              + 'INFLACAO: [IPCA 12m] + tendencia + meta\n'
+              + 'CAMBIO: [USD/BRL] + drivers + cenario\n'
+              + 'BOLSA: [Ibov nivel] + fluxo + valuation\n\n'
+              + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.\n\n'
               + 'FORMATO DO macroDetail (string unica com 3 secoes separadas por \\n\\n):\n'
               + 'BRASIL\n[Paragrafo de 3-4 frases sobre ciclo de juros, atividade, fiscal, com numeros]\n\n'
               + 'CENARIO GLOBAL\n[Paragrafo de 3-4 frases sobre Fed, China, tensoes geopoliticas, commodities]\n\n'
@@ -2045,10 +2061,11 @@ function MeetingPrepModal(p) {
           } else if (wantMacroShort) {
             mPrompt += 'Gere JSON: {"macroShort":"..."}\n\n'
               + 'FORMATO (string unica, exatos 4 bullets com emoji, um por linha):\n'
-              + '📊 Selic: [nivel atual] + direcao esperada + impacto\n'
-              + '💰 Inflacao: [IPCA 12m] + tendencia + meta\n'
-              + '💵 Cambio: [USD/BRL] + drivers + cenario\n'
-              + '📈 Bolsa: [Ibov nivel] + fluxo + valuation';
+              + 'SELIC: [nivel atual] + direcao esperada + impacto\n'
+              + 'INFLACAO: [IPCA 12m] + tendencia + meta\n'
+              + 'CAMBIO: [USD/BRL] + drivers + cenario\n'
+              + 'BOLSA: [Ibov nivel] + fluxo + valuation\n\n'
+              + 'REGRA CRITICA: NAO use emojis nem caracteres especiais. Apenas letras, numeros e acentos portugueses.';
           } else {
             mPrompt += 'Gere JSON: {"macroDetail":"..."}\n\n'
               + 'FORMATO (string unica com 3 secoes separadas por \\n\\n):\n'
@@ -2088,13 +2105,13 @@ function MeetingPrepModal(p) {
             try {
               var eSysPrompt = "Voce e um consultor CNPI senior preparando briefing para um colega. "
                 + "Para CADA empresa, retorne um resumo ESTRUTURADO em 4 blocos curtos, separados por \\n\\n dentro da string summary:\\n\\n"
-                + "📌 TESE EM UMA LINHA\\n[Uma frase de ate 20 palavras explicando a tese central]\\n\\n"
-                + "✅ DESTAQUES DO ULTIMO RESULTADO\\n• [ponto 1 com numero]\\n• [ponto 2 com numero]\\n• [ponto 3 com numero]\\n\\n"
-                + "⚠️ PONTOS DE ATENCAO\\n• [risco/fraqueza 1]\\n• [risco/fraqueza 2]\\n\\n"
-                + "🎯 VISAO SUNO E ACAO\\n[Uma frase sobre preco-teto, margem de seguranca e o que dizer ao cliente]\\n\\n"
+                + "TESE EM UMA LINHA\n[Uma frase de ate 20 palavras explicando a tese central]\n\n"
+                + "DESTAQUES DO ULTIMO RESULTADO\n- [ponto 1 com numero]\n- [ponto 2 com numero]\n- [ponto 3 com numero]\n\n"
+                + "PONTOS DE ATENCAO\n- [risco/fraqueza 1]\n- [risco/fraqueza 2]\n\n"
+                + "VISAO SUNO E ACAO\n[Uma frase sobre preco-teto, margem de seguranca e o que dizer ao cliente]\n\n"
                 + "Use numeros concretos (percentuais, R$, multiplos). Retorne APENAS JSON puro: "
                 + '[{\"ticker\":\"XXXX3\",\"summary\":\"texto estruturado como UMA STRING com \\\\n\\\\n\"}]. '
-                + "Sem markdown, sem ```, cada summary e UMA STRING.";
+                + "Sem markdown, sem ```, cada summary e UMA STRING. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.";
               var eD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:3000,system:eSysPrompt,messages:[{role:"user",content:JSON.stringify(eCtx)}]});
               var eRaw = extractText(eD.content);
               if (eRaw) { var eP = safeParseJSON(eRaw); if (Array.isArray(eP)) eP.forEach(function(e){res.empresas[e.ticker]={ticker:e.ticker,summary:cleanCitations(toStr(e.summary))};}); }
@@ -2110,12 +2127,12 @@ function MeetingPrepModal(p) {
           var tMsg = "CLIENTE: " + profileCtx + posCtx + "\nFOCO DA REUNIAO: " + (meetingFocus || "revisao trimestral");
           if (res.macroShort) tMsg += "\n\nCONTEXTO MACRO ATUAL:\n" + res.macroShort.slice(0,600);
           tMsg += '\n\nGere um roteiro de conversa ESTRUTURADO em 4 blocos, separados por \\n\\n dentro da string talkPoints:\n\n'
-            + '🎯 ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
-            + '📊 PONTOS PRINCIPAIS A APRESENTAR\n• [tema 1 - frase especifica para este cliente]\n• [tema 2]\n• [tema 3]\n• [tema 4]\n\n'
-            + '❓ PERGUNTAS PARA FAZER AO CLIENTE\n• [pergunta aberta sobre perfil/objetivos]\n• [pergunta sobre tolerancia/liquidez]\n\n'
-            + '✅ PROXIMOS PASSOS SUGERIDOS\n• [acao concreta 1]\n• [acao concreta 2]\n\n'
+            ++ 'ABERTURA (1-2 frases)\n[Como iniciar a conversa conectando cenario atual com situacao do cliente]\n\n'
+            + 'PONTOS PRINCIPAIS A APRESENTAR\n- [tema 1 - frase especifica para este cliente]\n- [tema 2]\n- [tema 3]\n- [tema 4]\n\n'
+            + 'PERGUNTAS PARA FAZER AO CLIENTE\n- [pergunta aberta sobre perfil/objetivos]\n- [pergunta sobre tolerancia/liquidez]\n\n'
+            + 'PROXIMOS PASSOS SUGERIDOS\n- [acao concreta 1]\n- [acao concreta 2]\n\n'
             + 'Personalize TUDO com base nos dados do cliente (idade, perfil de risco, horizonte, ativos em carteira). '
-            + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```.';
+            + 'Retorne APENAS JSON puro: {"talkPoints":"texto estruturado como UMA STRING com \\\\n\\\\n"}. Sem markdown, sem ```. CRITICO: NAO use emojis ou caracteres especiais. Apenas letras, numeros, pontuacao basica e acentos portugueses.';
           var tD = await callAPI({model:"claude-sonnet-4-20250514",max_tokens:2000,system:"Voce e um consultor CNPI senior com 20 anos de experiencia. Esta ajudando um colega a estruturar a conversa com o cliente dele. Use linguagem profissional, consultiva e orientada a acao. Cada ponto deve ser PERSONALIZADO com base nos dados do cliente — nao use generalidades. Retorne APENAS JSON puro, sem markdown, sem ```. O campo talkPoints deve ser UMA STRING (nao array).",messages:[{role:"user",content:tMsg}]});
           var tRaw = extractText(tD.content);
           if (tRaw) { var tP = safeParseJSON(tRaw); res.talkPoints = cleanCitations(toStr(tP.talkPoints))||null; }
@@ -2187,10 +2204,18 @@ function MeetingPrepModal(p) {
         return false;
       }
 
-      // Render a line that starts with emoji + TITLE as a sub-header
+      // Detecta títulos de seção: linhas em CAIXA ALTA ou rótulos terminados em ":"
+      // Exemplos que devem retornar true: "BRASIL", "CENARIO GLOBAL", "TESE EM UMA LINHA", "SELIC: detalhes"
       function isSectionHeader(line) {
-        // Matches: starts with emoji (🎯📌✅⚠️📊💰💵📈❓) followed by space + uppercase text
-        return /^[\u{1F300}-\u{1F9FF}\u{2600}-\u{27BF}]\s+[A-ZÀ-Ý]/u.test(line.trim());
+        var trimmed = line.trim();
+        if (trimmed.length < 3 || trimmed.length > 70) return false;
+        var labelMatch = trimmed.match(/^([A-ZÀ-ÝÇ][A-ZÀ-ÝÇ\s]{2,40}):/);
+        if (labelMatch) return true;
+        var letters = trimmed.replace(/[^A-Za-zÀ-ÿÇç]/g, "");
+        if (letters.length < 3) return false;
+        var uppers = letters.replace(/[^A-ZÀ-ÝÇ]/g, "");
+        var ratio = uppers.length / letters.length;
+        return ratio > 0.85;
       }
       function isBullet(line) {
         var t = line.trim();
@@ -2267,9 +2292,9 @@ function MeetingPrepModal(p) {
         if (subtitle) {
           doc.setFontSize(9); doc.setFont("helvetica","italic"); setC(CLR.muted);
           doc.text(subtitle, ML, y);
-          y += 8;
+          y += 10;
         } else {
-          y += 4;
+          y += 6;
         }
       }
 
@@ -3353,7 +3378,14 @@ function ConsultiveReportModal(p) {
       function setC(c){doc.setTextColor(c[0],c[1],c[2]);}
       function setF(c){doc.setFillColor(c[0],c[1],c[2]);}
       function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
-      function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(t||"",mw);}
+      // BLINDAGEM: intercepta doc.text para passar tudo pelo sanitizador
+      var _origText = doc.text.bind(doc);
+      doc.text = function(text, x, y, options) {
+        if (typeof text === "string") text = sanitizePDFText(text);
+        else if (Array.isArray(text)) text = text.map(sanitizePDFText);
+        return _origText(text, x, y, options);
+      };
+      function wrap(t,mw,sz){doc.setFontSize(sz);return doc.splitTextToSize(sanitizePDFText(t||""),mw);}
       var y=0;
       function drawHeader(){setF(C.accent);doc.rect(0,0,W,0.5,"F");doc.setFontSize(6.5);doc.setFont("helvetica","bold");setC(C.muted);doc.text("SUNO ADVISORY HUB",ML,8);doc.setFont("helvetica","normal");doc.text("RELATÓRIO DE RECOMENDAÇÕES",W-MR,8,{align:"right"});setD(C.rule);doc.line(ML,11,W-MR,11);}
       function newPage(){doc.addPage();drawHeader();return 18;}
