@@ -1,6 +1,6 @@
 {
   "name": "suno-advisory-hub",
-  "version": "9.3.0",
+  "version": "9.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "jspdf": "^2.5.1",
