@@ -5376,20 +5376,44 @@ function AuthGate() {
     };
   }, []);
 
-  // Load profile whenever session appears
+  // Load profile whenever session appears.
+  // If the profile is missing (e.g. trigger disabled by Supabase), call the
+  // provision_consultor RPC as a fallback. The RPC is idempotent.
   var uid = session && session.user ? session.user.id : null;
   useEffect(function() {
     if (!uid) { setProfile(null); return; }
     setProfileErr(null);
-    supabase.from("consultores").select("*").eq("id", uid).single().then(function(res) {
-      if (res.error) {
-        // If the profile row wasn't created (e.g. trigger failed), show an error
-        setProfileErr(res.error.message);
-        setProfile(null);
-      } else {
-        setProfile(res.data);
-      }
-    });
+
+    function fetchProfile(isRetry) {
+      supabase.from("consultores").select("*").eq("id", uid).single().then(function(res) {
+        if (!res.error) {
+          setProfile(res.data);
+          return;
+        }
+        // Profile not found — if this is the first attempt, try to auto-provision.
+        if (!isRetry) {
+          supabase.rpc("provision_consultor").then(function(rpc) {
+            if (rpc.error) {
+              setProfileErr(rpc.error.message);
+              setProfile(null);
+              return;
+            }
+            // RPC succeeded — it returns the consultor row directly.
+            if (rpc.data) {
+              setProfile(rpc.data);
+            } else {
+              // Fallback: re-query after RPC just in case.
+              fetchProfile(true);
+            }
+          });
+        } else {
+          setProfileErr(res.error.message);
+          setProfile(null);
+        }
+      });
+    }
+
+    fetchProfile(false);
   }, [uid]);
 
   function handleLogout() {
