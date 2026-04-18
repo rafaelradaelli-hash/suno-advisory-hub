@@ -2497,6 +2497,7 @@ function saveCarteiras(d) {
 }
 
 function CarteirasModal(p) {
+  var isAdmin = !!p.isAdmin;
   var [cData, setCData] = useState(function(){ return loadCarteiras(); });
   var [selCart, setSelCart] = useState(null);
   var [addingCart, setAddingCart] = useState(false);
@@ -2671,7 +2672,7 @@ function CarteirasModal(p) {
           <div style={{width:"220px",borderRight:"1px solid rgba(255,255,255,0.05)",padding:"12px",flexShrink:0}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
               <div style={{fontSize:"9px",fontWeight:700,color:"rgba(59,130,246,0.8)",textTransform:"uppercase",letterSpacing:"1px"}}>Carteiras</div>
-              <button onClick={function(){setAddingCart(true);setEditCartId(null);setCartName("");setCartIntl(false);}} style={{fontSize:"9px",padding:"3px 8px",borderRadius:"5px",border:"none",background:"rgba(59,130,246,0.12)",color:"#60a5fa",fontWeight:700,cursor:"pointer"}}>+ Nova</button>
+              {isAdmin&&<button onClick={function(){setAddingCart(true);setEditCartId(null);setCartName("");setCartIntl(false);}} style={{fontSize:"9px",padding:"3px 8px",borderRadius:"5px",border:"none",background:"rgba(59,130,246,0.12)",color:"#60a5fa",fontWeight:700,cursor:"pointer"}}>+ Nova</button>}
             </div>
             {carteiras.map(function(c){
               var cnt = getCartAtivos(c.id).length;
@@ -2684,10 +2685,10 @@ function CarteirasModal(p) {
                     <span>{cnt} ativo{cnt!==1?"s":""}</span>
                   </div>
                 </div>
-                <div style={{display:"flex",gap:"2px"}}>
+                {isAdmin&&<div style={{display:"flex",gap:"2px"}}>
                   <button onClick={function(ev){ev.stopPropagation();startEditCart(c);}} style={{fontSize:"9px",color:"rgba(255,255,255,0.3)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 4px"}}>✎</button>
                   <button onClick={function(ev){ev.stopPropagation();deleteCarteira(c.id);}} style={{fontSize:"9px",color:"rgba(220,38,38,0.4)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 4px"}}>✕</button>
-                </div>
+                </div>}
               </div>;
             })}
             {addingCart && (<div style={{background:"rgba(59,130,246,0.05)",borderRadius:"8px",padding:"10px",border:"1px solid rgba(59,130,246,0.12)",marginTop:"8px"}}>
@@ -2715,13 +2716,13 @@ function CarteirasModal(p) {
                     <span style={{fontSize:"10px",color:"rgba(255,255,255,0.3)"}}>{selAtivos.length} ativo{selAtivos.length!==1?"s":""}</span>
                   </div>
                 </div>
-                <div style={{display:"flex",gap:"6px"}}>
+                {isAdmin&&<div style={{display:"flex",gap:"6px"}}>
                   <label style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(59,130,246,0.2)",background:"rgba(59,130,246,0.06)",color:"#60a5fa",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>
                     {importing?"Importando...":"Importar Imagem/Excel"}
                     <input ref={importRef} type="file" accept=".xlsx,.xls,.csv,.png,.jpg,.jpeg,.webp" onChange={handleImport} style={{display:"none"}}/>
                   </label>
                   <button onClick={startAddAtivo} style={{padding:"7px 12px",borderRadius:"7px",border:"none",background:"#3b82f6",color:"#fff",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>+ Ativo</button>
-                </div>
+                </div>}
               </div>
               {addingAtivo && (<div style={{background:"rgba(59,130,246,0.04)",border:"1px solid rgba(59,130,246,0.12)",borderRadius:"10px",padding:"14px",marginBottom:"12px"}}>
                 <div style={{fontSize:"11px",fontWeight:700,color:"#60a5fa",marginBottom:"10px"}}>{editAtivoIdx!==null?"Editar":"Adicionar"} Ativo</div>
@@ -2738,7 +2739,7 @@ function CarteirasModal(p) {
                   <button onClick={saveAtivo} disabled={!aForm.ticker.trim()} style={{padding:"7px 14px",borderRadius:"7px",border:"none",background:aForm.ticker.trim()?"#3b82f6":"rgba(255,255,255,0.05)",color:aForm.ticker.trim()?"#fff":"rgba(255,255,255,0.3)",fontWeight:700,fontSize:"10px",cursor:"pointer"}}>Salvar</button>
                 </div>
               </div>)}
-              {selAtivos.length===0&&!addingAtivo&&<div style={{textAlign:"center",padding:"50px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Nenhum ativo nesta carteira.<br/>Clique em "+ Ativo" ou "Importar Imagem/Excel" para adicionar.</div>}
+              {selAtivos.length===0&&!addingAtivo&&<div style={{textAlign:"center",padding:"50px 0",color:"rgba(255,255,255,0.15)",fontSize:"12px"}}>Nenhum ativo nesta carteira.{isAdmin&&<><br/>Clique em "+ Ativo" ou "Importar Imagem/Excel" para adicionar.</>}</div>}
               {selAtivos.length>0&&(<div style={{overflow:"auto"}}>
                 <table style={{width:"100%",borderCollapse:"collapse",fontSize:"11px"}}>
                   <thead><tr style={{borderBottom:"1px solid rgba(255,255,255,0.08)"}}>
@@ -2748,7 +2749,7 @@ function CarteirasModal(p) {
                     <th style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Preço-teto</th>
                     {!selCartObj.intl&&<th style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Aloc %</th>}
                     <th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px"}}>Viés</th>
-                    <th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px",width:"60px"}}>Ações</th>
+                    {isAdmin&&<th style={{textAlign:"center",padding:"8px 6px",color:"rgba(255,255,255,0.4)",fontWeight:600,fontSize:"9px",width:"60px"}}>Ações</th>}
                   </tr></thead>
                   <tbody>{selAtivos.map(function(a,idx){
                     return <tr key={a.ticker+idx} style={{borderBottom:"1px solid rgba(255,255,255,0.03)"}}>
@@ -2758,10 +2759,10 @@ function CarteirasModal(p) {
                       <td style={{textAlign:"right",padding:"8px 6px",color:"rgba(255,255,255,0.6)",fontWeight:600}}>{a.precoTeto!=null?(selCartObj.intl?"US$ ":"R$ ")+Number(a.precoTeto).toFixed(2):"—"}</td>
                       {!selCartObj.intl&&<td style={{textAlign:"right",padding:"8px 6px",color:"rgba(59,130,246,0.8)",fontWeight:600}}>{a.aloc!=null?a.aloc+"%":"—"}</td>}
                       <td style={{textAlign:"center",padding:"8px 6px"}}><span style={{padding:"2px 10px",borderRadius:"12px",fontSize:"10px",fontWeight:700,background:(viesColors[a.vies]||"#94a3b8")+"18",color:viesColors[a.vies]||"#94a3b8",border:"1px solid "+(viesColors[a.vies]||"#94a3b8")+"33"}}>{a.vies||"—"}</span></td>
-                      <td style={{textAlign:"center",padding:"8px 6px"}}>
+                      {isAdmin&&<td style={{textAlign:"center",padding:"8px 6px"}}>
                         <button onClick={function(){startEditAtivo(idx);}} style={{fontSize:"9px",color:"rgba(255,255,255,0.35)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 5px",marginRight:"2px"}}>✎</button>
                         <button onClick={function(){deleteAtivo(idx);}} style={{fontSize:"9px",color:"rgba(220,38,38,0.4)",background:"transparent",border:"none",cursor:"pointer",padding:"2px 5px"}}>✕</button>
-                      </td>
+                      </td>}
                     </tr>;
                   })}</tbody>
                 </table>
@@ -5608,9 +5609,9 @@ function MainApp(props) {
 
   // Pillar configs
   var pillarItems = {
-    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"}].concat(adminMode ? [{id:"chat",label:"Consulta IA ✨"}] : []),
+    research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"}].concat(isAdmin ? [{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"},{id:"chat",label:"Consulta IA ✨"}] : []),
     consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
-    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}].concat(isAdmin ? [{id:"consultores",label:"Consultores 👥"}] : [])
+    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"}].concat(isAdmin ? [{id:"config",label:"Configurações"},{id:"consultores",label:"Consultores 👥"}] : [])
   };
   var pillarColors = {research:"#991b1b",consultoria:"#DC2626",clientes:"#ef4444"};
   var pillarLabels = {research:"Research",consultoria:"Consultoria",clientes:"Clientes"};
@@ -5671,11 +5672,11 @@ function MainApp(props) {
             {panel&&<AddPanel onAdd={handleAdd} currentData={data}/>}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"12px"}}>
               <div style={{display:"flex",gap:"2px",flexWrap:"wrap"}}>{["Visão Geral","Dividendos","Valor","Small Caps","Internacional","FIIs"].map(function(t){return <button key={t} onClick={function(){setTab(t);if(t==="Internacional")setIsub("Dollar Income");}} style={{padding:"7px 10px",border:"none",cursor:"pointer",fontSize:"11px",fontWeight:700,borderRadius:"7px 7px 0 0",background:tab===t?(t==="Visão Geral"?"rgba(139,92,246,0.9)":"#DC2626"):"transparent",color:tab===t?"#fff":"rgba(255,255,255,0.3)",whiteSpace:"nowrap"}}>{t}{t!=="Visão Geral"&&<span style={{marginLeft:"3px",fontSize:"9px",padding:"1px 4px",borderRadius:"5px",background:tab===t?"rgba(255,255,255,0.18)":"rgba(255,255,255,0.04)"}}>{(data[t]||[]).length}</span>}</button>;})}</div>
-              <button onClick={function(){setPanel(!panel);}} style={{padding:"6px 14px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"10px"}}>{panel?"Fechar":"+ Adicionar"}</button>
+              {isAdmin&&<button onClick={function(){setPanel(!panel);}} style={{padding:"6px 14px",borderRadius:"7px",border:"none",cursor:"pointer",background:panel?"rgba(255,255,255,0.07)":"#DC2626",color:"#fff",fontWeight:700,fontSize:"10px"}}>{panel?"Fechar":"+ Adicionar"}</button>}
             </div>
           </div>
           {tab==="Internacional"&&(<div style={{padding:"0 16px",background:"rgba(220,38,38,0.02)",borderBottom:"1px solid rgba(255,255,255,0.05)"}}><div style={{display:"flex",gap:"2px",paddingTop:"6px"}}>{["Dollar Income","Hidden Value","Great Companies"].map(function(sub){var cnt=(data.Internacional||[]).filter(function(s){return(INTL_SUBS[sub]||[]).indexOf(s.ticker)>=0||s.intlSub===sub;}).length;return <button key={sub} onClick={function(){setIsub(sub);}} style={{padding:"7px 14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:700,borderRadius:"5px 5px 0 0",background:isub===sub?"rgba(220,38,38,0.12)":"transparent",color:isub===sub?"#DC2626":"rgba(255,255,255,0.25)",borderBottom:isub===sub?"2px solid #DC2626":"2px solid transparent"}}>{sub}<span style={{marginLeft:"4px",fontSize:"9px"}}>{cnt}</span></button>;})}</div></div>)}
-          {tab!=="Visão Geral"&&tab!=="FIIs"&&(<div style={{padding:"8px 16px",display:"flex",gap:"4px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>★ Destaques</button><button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar"}</button></div>)}
+          {tab!=="Visão Geral"&&tab!=="FIIs"&&(<div style={{padding:"8px 16px",display:"flex",gap:"4px",alignItems:"center",flexWrap:"wrap"}}><input value={search} onChange={function(e){setSearch(e.target.value);}} placeholder="Buscar..." style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.07)",background:"rgba(255,255,255,0.02)",color:"#e2e8f0",fontSize:"11px",outline:"none",width:"180px"}}/>{["all","positive","neutral","negative"].map(function(s){var lb={all:"Todos",positive:"Positivos",neutral:"Neutros",negative:"Negativos"};return <button key={s} onClick={function(){setSf(s);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:sf===s?(s==="all"?"#DC2626":"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",color:sf===s?(s==="all"?"#fff":s==="positive"?"#4ade80":s==="neutral"?"#94a3b8":"#f87171"):"rgba(255,255,255,0.3)"}}>{lb[s]}</button>;})}<button onClick={function(){setHl(!hl);}} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:"pointer",fontSize:"10px",fontWeight:600,background:hl?"rgba(251,191,36,0.12)":"rgba(255,255,255,0.03)",color:hl?"#fbbf24":"rgba(255,255,255,0.3)"}}>★ Destaques</button>{isAdmin&&<button onClick={handleReeval} disabled={revalLoad} style={{padding:"5px 10px",borderRadius:"14px",border:"none",cursor:revalLoad?"wait":"pointer",fontSize:"10px",fontWeight:600,background:"rgba(139,92,246,0.1)",color:"#a78bfa",marginLeft:"auto"}}>{revalLoad?"Avaliando...":"Reavaliar"}</button>}</div>)}
           {revalProg&&<div style={{padding:"6px 24px"}}><div style={{fontSize:"10px",color:"#a78bfa",padding:"6px 10px",background:"rgba(139,92,246,0.05)",borderRadius:"6px"}}>{revalProg}</div></div>}
          <div style={{padding:"0 16px 24px"}}>{tab==="FIIs"&&<FIIsTab/>}{tab!=="FIIs"&&(tab==="Visão Geral"?(<div>
             {(function(){
@@ -5694,13 +5695,13 @@ function MainApp(props) {
           </div>):(<div>{stocks.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"rgba(255,255,255,0.18)",fontSize:"12px"}}>Nenhum ativo encontrado.</div>}{stocks.map(function(s){return <StockCard key={s.ticker} stock={s} onDelete={handleDel}/>;})}</div>))}</div>
         </div>)}
 
-        {/* RESEARCH > CARTEIRAS */}
-        {pilar==="research"&&page==="carteiras"&&<CarteirasModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
+        {/* RESEARCH > CARTEIRAS (read-only para consultor; edição só admin) */}
+        {pilar==="research"&&page==="carteiras"&&<CarteirasModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true} isAdmin={isAdmin}/>}
 
-        {/* RESEARCH > MACRO */}
-        {pilar==="research"&&page==="macro"&&<MacroModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
-        {pilar==="research"&&page==="fiis"&&<FIIsPage key={cloudReady}/>}
-        {pilar==="research"&&page==="chat"&&adminMode&&<div style={{padding:"24px"}}><AdvisorChat key={cloudReady} data={data}/></div>}
+        {/* RESEARCH > MACRO (admin-only) */}
+        {pilar==="research"&&page==="macro"&&isAdmin&&<MacroModal key={cloudReady} onClose={function(){nav("research","teses");}} inline={true}/>}
+        {pilar==="research"&&page==="fiis"&&isAdmin&&<FIIsPage key={cloudReady}/>}
+        {pilar==="research"&&page==="chat"&&isAdmin&&<div style={{padding:"24px"}}><AdvisorChat key={cloudReady} data={data}/></div>}
 
         {/* CONSULTORIA > RECOMENDAÇÕES */}
         {pilar==="consultoria"&&page==="recomendacoes"&&<ConsultiveReportModal key={cloudReady} data={data} onClose={function(){nav("research","teses");}} inline={true}/>}
@@ -5717,8 +5718,8 @@ function MainApp(props) {
         {/* CLIENTES > CONSULTORES (admin-only) */}
         {pilar==="clientes"&&page==="consultores"&&isAdmin&&<div style={{padding:"24px"}}><AdminConsultoresPanel/></div>}
 
-        {/* CLIENTES > CONFIG */}
-        {pilar==="clientes"&&page==="config"&&(<div style={{padding:"24px"}}>
+        {/* CLIENTES > CONFIG (admin-only) */}
+        {pilar==="clientes"&&page==="config"&&isAdmin&&(<div style={{padding:"24px"}}>
           <div style={{fontSize:"16px",fontWeight:800,color:"#fff",marginBottom:"16px"}}>Configurações</div>
 
           <div style={{marginBottom:"20px",background:"rgba(74,222,128,0.04)",border:"1px solid rgba(74,222,128,0.15)",borderRadius:"10px",padding:"14px"}}>
