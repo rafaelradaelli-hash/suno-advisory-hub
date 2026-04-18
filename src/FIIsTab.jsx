@@ -1,13 +1,12 @@
 import { useState, useEffect } from 'react';
+import { supabase, SUPABASE_URL, SUPABASE_KEY, getAuthToken } from './supabaseClient';
 
-/* ── Load Supabase fii_reports ── */
-var SUPABASE_URL = "https://zjowgamtmfqzievqnrhg.supabase.co";
-var SUPABASE_KEY = "sb_publishable_L9M6LKA_YuyygIPs_t1oMA_Z-pF2kGz";
-
+/* ── Load Supabase fii_reports (session-aware, shared table) ── */
 async function loadFiiReports() {
   try {
+    var token = await getAuthToken();
     var r = await fetch(SUPABASE_URL + "/rest/v1/fii_reports?select=*", {
-      headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
+      headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + token }
     });
     var data = await r.json();
     if (Array.isArray(data)) return data;

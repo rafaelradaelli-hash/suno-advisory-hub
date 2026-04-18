@@ -4,27 +4,62 @@ import FIIsTab from './FIIsTab';
 import AdvisorChat from './AdvisorChat.jsx';
 import { jsPDF } from "jspdf";
 import * as XLSX from "xlsx";
+import { supabase, SUPABASE_URL, SUPABASE_KEY, getAuthToken, getUserId } from './supabaseClient';
 
-/* ═══ SUPABASE SYNC LAYER ═══ */
-var SUPABASE_URL = "https://zjowgamtmfqzievqnrhg.supabase.co";
-var SUPABASE_KEY = "sb_publishable_L9M6LKA_YuyygIPs_t1oMA_Z-pF2kGz";
+/* ═══ SUPABASE SYNC LAYER (auth-aware) ═══
+   - client_profiles is PER-USER (filtered by owner_id = auth.uid())
+   - app_data, macro_data, carteiras_data are SHARED (all consultants read/write the same id='main' row)
+   - fii_reports is handled by FIIsPage.jsx (shared, multi-row table)
+*/
+var PER_USER_TABLES = { client_profiles: true };
 
 var _syncQueue = {};
 var _syncTimer = null;
 
-function supaFetch(table, method, body) {
-  var url = SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main";
+async function _buildHeaders(method) {
+  var token = await getAuthToken();
   var headers = {
     "apikey": SUPABASE_KEY,
-    "Authorization": "Bearer " + SUPABASE_KEY,
-    "Content-Type": "application/json",
-    "Prefer": method === "GET" ? "" : "return=minimal"
+    "Authorization": "Bearer " + token
   };
-  if (method === "GET") {
-    url = SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main&select=*";
-    return fetch(url, {headers: {"apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY}}).then(function(r){return r.json();});
+  if (method !== "GET") {
+    headers["Content-Type"] = "application/json";
+    headers["Prefer"] = "return=minimal";
   }
-  return fetch(url, {method: "PATCH", headers: headers, body: JSON.stringify(body)});
+  return headers;
+}
+
+async function supaFetch(table, method, body) {
+  var isPerUser = !!PER_USER_TABLES[table];
+  var headers = await _buildHeaders(method);
+  var uid = null;
+  if (isPerUser) {
+    uid = await getUserId();
+    if (!uid) {
+      // No session — do not attempt to hit the REST API for per-user tables.
+      if (method === "GET") return [];
+      return { ok: false, status: 401 };
+    }
+  }
+
+  if (method === "GET") {
+    var getUrl = isPerUser
+      ? SUPABASE_URL + "/rest/v1/" + table + "?owner_id=eq." + uid + "&select=*"
+      : SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main&select=*";
+    return fetch(getUrl, { headers: headers }).then(function(r){ return r.json(); });
+  }
+
+  if (isPerUser) {
+    // UPSERT by owner_id so the same code works for first write (INSERT) and subsequent writes (UPDATE).
+    var upsertUrl = SUPABASE_URL + "/rest/v1/" + table + "?on_conflict=owner_id";
+    var upsertHeaders = Object.assign({}, headers, { "Prefer": "resolution=merge-duplicates,return=minimal" });
+    var upsertBody = Object.assign({ owner_id: uid }, body);
+    return fetch(upsertUrl, { method: "POST", headers: upsertHeaders, body: JSON.stringify(upsertBody) });
+  }
+
+  // Shared tables: patch the single id='main' row (keeping legacy behavior).
+  var patchUrl = SUPABASE_URL + "/rest/v1/" + table + "?id=eq.main";
+  return fetch(patchUrl, { method: "PATCH", headers: headers, body: JSON.stringify(body) });
 }
 
 // Debounced cloud save — batches rapid writes into one call per table
@@ -5079,7 +5114,324 @@ function ConsultiveReportModal(p) {
   );
 }
 
-export default function App() {
+/* ═══════════════════════════════════════════
+   AUTH: LoginScreen + AuthGate + AdminConsultoresPanel
+═══════════════════════════════════════════ */
+
+var ALLOWED_DOMAIN = "@suno.com.br";
+
+function LoginScreen(props) {
+  var [mode, setMode] = useState("login"); // login | signup | forgot
+  var [email, setEmail] = useState("");
+  var [password, setPassword] = useState("");
+  var [nome, setNome] = useState("");
+  var [busy, setBusy] = useState(false);
+  var [msg, setMsg] = useState(null); // { type: "ok"|"err"|"info", text: "..." }
+
+  function handleSubmit(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    setMsg(null);
+    var em = (email || "").trim().toLowerCase();
+    if (!em) return setMsg({ type: "err", text: "Informe seu email." });
+
+    if (mode === "signup") {
+      if (em.indexOf(ALLOWED_DOMAIN) < 0 || !em.endsWith(ALLOWED_DOMAIN)) {
+        return setMsg({ type: "err", text: "Apenas emails " + ALLOWED_DOMAIN + " são permitidos." });
+      }
+      if (!password || password.length < 8) return setMsg({ type: "err", text: "A senha precisa ter ao menos 8 caracteres." });
+      if (!nome.trim()) return setMsg({ type: "err", text: "Informe seu nome completo." });
+      setBusy(true);
+      supabase.auth.signUp({
+        email: em,
+        password: password,
+        options: { data: { nome: nome.trim() } }
+      }).then(function(res) {
+        setBusy(false);
+        if (res.error) return setMsg({ type: "err", text: res.error.message || "Erro ao cadastrar." });
+        if (res.data && res.data.session) {
+          // Auto-logged in (email confirmation disabled in Supabase)
+          setMsg({ type: "ok", text: "Cadastro concluído! Entrando..." });
+        } else {
+          setMsg({ type: "info", text: "Cadastro criado. Verifique seu email para confirmar antes de entrar." });
+          setMode("login");
+        }
+      }).catch(function(err) {
+        setBusy(false);
+        setMsg({ type: "err", text: err.message || "Erro ao cadastrar." });
+      });
+      return;
+    }
+
+    if (mode === "forgot") {
+      setBusy(true);
+      supabase.auth.resetPasswordForEmail(em, {
+        redirectTo: window.location.origin
+      }).then(function(res) {
+        setBusy(false);
+        if (res.error) return setMsg({ type: "err", text: res.error.message });
+        setMsg({ type: "ok", text: "Enviamos um link de redefinição para " + em + "." });
+      }).catch(function(err) {
+        setBusy(false);
+        setMsg({ type: "err", text: err.message || "Erro ao enviar email." });
+      });
+      return;
+    }
+
+    // login
+    if (!password) return setMsg({ type: "err", text: "Informe sua senha." });
+    setBusy(true);
+    supabase.auth.signInWithPassword({ email: em, password: password }).then(function(res) {
+      setBusy(false);
+      if (res.error) return setMsg({ type: "err", text: res.error.message || "Email ou senha inválidos." });
+    }).catch(function(err) {
+      setBusy(false);
+      setMsg({ type: "err", text: err.message || "Erro ao entrar." });
+    });
+  }
+
+  var inputStyle = {
+    width: "100%", boxSizing: "border-box",
+    padding: "12px 14px", borderRadius: "8px",
+    border: "1px solid rgba(255,255,255,0.1)",
+    background: "rgba(255,255,255,0.03)", color: "#e2e8f0",
+    fontSize: "13px", outline: "none", marginBottom: "10px"
+  };
+
+  var titles = { login: "Entrar", signup: "Criar conta", forgot: "Redefinir senha" };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#09090b",color:"#e2e8f0",fontFamily:"system-ui,-apple-system,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+      <div style={{width:"100%",maxWidth:"380px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"24px",justifyContent:"center"}}>
+          <div style={{width:"44px",height:"44px",borderRadius:"10px",background:"linear-gradient(135deg, #DC2626 0%, #991b1b 100%)",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 2px 12px rgba(220,38,38,0.4)"}}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          </div>
+          <div>
+            <h1 style={{margin:0,fontSize:"18px",fontWeight:800,color:"#fff"}}>Suno <span style={{color:"#DC2626"}}>Advisory</span> Hub</h1>
+            <div style={{fontSize:"10px",color:"rgba(255,255,255,0.4)",marginTop:"2px"}}>Acesso restrito a consultores Suno</div>
+          </div>
+        </div>
+
+        <div style={{background:"#111",border:"1px solid rgba(255,255,255,0.06)",borderRadius:"14px",padding:"24px"}}>
+          <div style={{fontSize:"14px",fontWeight:700,color:"#fff",marginBottom:"16px"}}>{titles[mode]}</div>
+
+          <form onSubmit={handleSubmit}>
+            {mode === "signup" && (
+              <input type="text" placeholder="Nome completo" value={nome} onChange={function(e){setNome(e.target.value);}} style={inputStyle} disabled={busy} autoComplete="name" />
+            )}
+            <input type="email" placeholder={"Email (" + ALLOWED_DOMAIN + ")"} value={email} onChange={function(e){setEmail(e.target.value);}} style={inputStyle} disabled={busy} autoComplete="email" autoFocus />
+            {mode !== "forgot" && (
+              <input type="password" placeholder={mode === "signup" ? "Senha (mín. 8 caracteres)" : "Senha"} value={password} onChange={function(e){setPassword(e.target.value);}} style={inputStyle} disabled={busy} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+            )}
+
+            {msg && (
+              <div style={{padding:"10px 12px",borderRadius:"7px",marginBottom:"10px",fontSize:"11px",lineHeight:1.5,background:msg.type==="err"?"rgba(220,38,38,0.1)":msg.type==="ok"?"rgba(74,222,128,0.1)":"rgba(96,165,250,0.1)",color:msg.type==="err"?"#f87171":msg.type==="ok"?"#4ade80":"#60a5fa",border:"1px solid "+(msg.type==="err"?"rgba(220,38,38,0.25)":msg.type==="ok"?"rgba(74,222,128,0.25)":"rgba(96,165,250,0.25)")}}>
+                {msg.text}
+              </div>
+            )}
+
+            <button type="submit" disabled={busy} style={{width:"100%",padding:"12px",borderRadius:"8px",border:"none",background:busy?"rgba(220,38,38,0.4)":"#DC2626",color:"#fff",fontSize:"13px",fontWeight:700,cursor:busy?"wait":"pointer",marginTop:"4px"}}>
+              {busy ? "Aguarde..." : (mode === "login" ? "Entrar" : mode === "signup" ? "Criar conta" : "Enviar link de redefinição")}
+            </button>
+          </form>
+
+          <div style={{marginTop:"16px",paddingTop:"14px",borderTop:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",fontSize:"11px"}}>
+            {mode === "login" && (
+              <>
+                <button type="button" onClick={function(){setMode("signup");setMsg(null);}} style={{background:"none",border:"none",color:"#60a5fa",cursor:"pointer",fontSize:"11px",padding:0}}>Criar conta</button>
+                <button type="button" onClick={function(){setMode("forgot");setMsg(null);}} style={{background:"none",border:"none",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:"11px",padding:0}}>Esqueci a senha</button>
+              </>
+            )}
+            {mode !== "login" && (
+              <button type="button" onClick={function(){setMode("login");setMsg(null);}} style={{background:"none",border:"none",color:"#60a5fa",cursor:"pointer",fontSize:"11px",padding:0}}>← Voltar para entrar</button>
+            )}
+          </div>
+        </div>
+
+        <div style={{marginTop:"16px",textAlign:"center",fontSize:"10px",color:"rgba(255,255,255,0.25)"}}>
+          Cada consultor tem acesso apenas aos seus próprios clientes.<br/>
+          Research, carteiras e FIIs são compartilhados entre toda a equipe.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AccessBlockedScreen(props) {
+  return (
+    <div style={{minHeight:"100vh",background:"#09090b",color:"#e2e8f0",fontFamily:"system-ui,-apple-system,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+      <div style={{maxWidth:"380px",textAlign:"center"}}>
+        <div style={{fontSize:"36px",marginBottom:"14px"}}>🔒</div>
+        <div style={{fontSize:"16px",fontWeight:700,color:"#fff",marginBottom:"8px"}}>Acesso desativado</div>
+        <div style={{fontSize:"12px",color:"rgba(255,255,255,0.5)",lineHeight:1.6,marginBottom:"20px"}}>
+          Sua conta foi desativada por um administrador. Entre em contato com Rafael para reativação.
+        </div>
+        <button onClick={function(){ supabase.auth.signOut(); }} style={{padding:"10px 22px",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:"12px",fontWeight:600,cursor:"pointer"}}>Sair</button>
+      </div>
+    </div>
+  );
+}
+
+function AdminConsultoresPanel() {
+  var [list, setList] = useState([]);
+  var [loading, setLoading] = useState(true);
+  var [err, setErr] = useState(null);
+  var [savingId, setSavingId] = useState(null);
+
+  function reload() {
+    setLoading(true);
+    supabase.from("consultores").select("*").order("created_at", { ascending: true }).then(function(res) {
+      setLoading(false);
+      if (res.error) { setErr(res.error.message); return; }
+      setList(res.data || []);
+    });
+  }
+  useEffect(reload, []);
+
+  function toggleActive(c) {
+    setSavingId(c.id);
+    supabase.from("consultores").update({ ativo: !c.ativo }).eq("id", c.id).then(function(res) {
+      setSavingId(null);
+      if (res.error) { alert("Erro: " + res.error.message); return; }
+      reload();
+    });
+  }
+
+  function changeRole(c, newRole) {
+    if (!confirm("Alterar role de " + c.email + " para " + newRole + "?")) return;
+    setSavingId(c.id);
+    supabase.from("consultores").update({ role: newRole }).eq("id", c.id).then(function(res) {
+      setSavingId(null);
+      if (res.error) { alert("Erro: " + res.error.message); return; }
+      reload();
+    });
+  }
+
+  return (
+    <div>
+      <div style={{fontSize:"18px",fontWeight:800,color:"#fff",marginBottom:"6px"}}>Consultores</div>
+      <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginBottom:"20px",lineHeight:1.6}}>
+        Gerencie o acesso dos consultores ao Advisory Hub. Novos consultores entram pelo cadastro público usando email <strong style={{color:"rgba(255,255,255,0.7)"}}>@suno.com.br</strong>. Você pode desativar contas ou promover a admin.
+      </div>
+
+      {err && <div style={{padding:"10px 14px",background:"rgba(220,38,38,0.08)",border:"1px solid rgba(220,38,38,0.2)",borderRadius:"8px",color:"#f87171",fontSize:"11px",marginBottom:"14px"}}>Erro: {err}</div>}
+      {loading && <div style={{textAlign:"center",padding:"40px",color:"rgba(255,255,255,0.3)",fontSize:"12px"}}>Carregando consultores...</div>}
+
+      {!loading && list.length === 0 && (
+        <div style={{textAlign:"center",padding:"40px",color:"rgba(255,255,255,0.3)",fontSize:"12px"}}>Nenhum consultor cadastrado ainda.</div>
+      )}
+
+      {!loading && list.map(function(c) {
+        var saving = savingId === c.id;
+        return (
+          <div key={c.id} style={{background:"#111",border:"1px solid rgba(255,255,255,0.05)",borderRadius:"10px",padding:"14px 18px",marginBottom:"8px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"12px",flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:"200px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                <span style={{fontWeight:700,fontSize:"13px",color:"#f1f5f9"}}>{c.nome || c.email.split("@")[0]}</span>
+                {c.role === "admin" && <span style={{fontSize:"9px",padding:"2px 7px",borderRadius:"10px",background:"rgba(251,191,36,0.12)",color:"#fbbf24",fontWeight:700,letterSpacing:"0.5px"}}>ADMIN</span>}
+                {!c.ativo && <span style={{fontSize:"9px",padding:"2px 7px",borderRadius:"10px",background:"rgba(248,113,113,0.12)",color:"#f87171",fontWeight:700,letterSpacing:"0.5px"}}>INATIVO</span>}
+              </div>
+              <div style={{fontSize:"11px",color:"rgba(255,255,255,0.4)",marginTop:"2px"}}>{c.email}</div>
+              <div style={{fontSize:"9px",color:"rgba(255,255,255,0.25)",marginTop:"2px"}}>Criado em {new Date(c.created_at).toLocaleDateString("pt-BR")}</div>
+            </div>
+            <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+              <button disabled={saving} onClick={function(){toggleActive(c);}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid "+(c.ativo?"rgba(248,113,113,0.25)":"rgba(74,222,128,0.25)"),background:"transparent",color:c.ativo?"#f87171":"#4ade80",fontSize:"11px",fontWeight:600,cursor:saving?"wait":"pointer"}}>
+                {saving ? "..." : (c.ativo ? "Desativar" : "Ativar")}
+              </button>
+              {c.role === "consultor" ? (
+                <button disabled={saving} onClick={function(){changeRole(c, "admin");}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(251,191,36,0.25)",background:"transparent",color:"#fbbf24",fontSize:"11px",fontWeight:600,cursor:saving?"wait":"pointer"}}>Promover a admin</button>
+              ) : (
+                <button disabled={saving} onClick={function(){changeRole(c, "consultor");}} style={{padding:"7px 12px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.5)",fontSize:"11px",fontWeight:600,cursor:saving?"wait":"pointer"}}>Rebaixar</button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AuthGate() {
+  var [session, setSession] = useState(null);
+  var [profile, setProfile] = useState(null);
+  var [loading, setLoading] = useState(true);
+  var [profileErr, setProfileErr] = useState(null);
+
+  // Subscribe to session changes
+  useEffect(function() {
+    var mounted = true;
+    supabase.auth.getSession().then(function(res) {
+      if (!mounted) return;
+      setSession(res.data && res.data.session ? res.data.session : null);
+      setLoading(false);
+    });
+    var sub = supabase.auth.onAuthStateChange(function(event, newSession) {
+      if (!mounted) return;
+      setSession(newSession || null);
+      if (!newSession) setProfile(null);
+    });
+    return function() {
+      mounted = false;
+      if (sub && sub.data && sub.data.subscription) sub.data.subscription.unsubscribe();
+    };
+  }, []);
+
+  // Load profile whenever session appears
+  var uid = session && session.user ? session.user.id : null;
+  useEffect(function() {
+    if (!uid) { setProfile(null); return; }
+    setProfileErr(null);
+    supabase.from("consultores").select("*").eq("id", uid).single().then(function(res) {
+      if (res.error) {
+        // If the profile row wasn't created (e.g. trigger failed), show an error
+        setProfileErr(res.error.message);
+        setProfile(null);
+      } else {
+        setProfile(res.data);
+      }
+    });
+  }, [uid]);
+
+  function handleLogout() {
+    // Clear app-specific localStorage so the next user doesn't briefly see stale data
+    try {
+      ["tt-v7","tt-v6","tt-clients","tt-macro","tt-carteiras-suno","suno-admin-unlock"].forEach(function(k){ localStorage.removeItem(k); });
+    } catch(e) {}
+    supabase.auth.signOut();
+  }
+
+  if (loading) {
+    return <div style={{minHeight:"100vh",background:"#09090b",color:"rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontFamily:"system-ui,-apple-system,sans-serif"}}>Carregando...</div>;
+  }
+
+  if (!session) return <LoginScreen />;
+
+  if (profileErr && !profile) {
+    return (
+      <div style={{minHeight:"100vh",background:"#09090b",color:"#e2e8f0",fontFamily:"system-ui,-apple-system,sans-serif",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{maxWidth:"420px",textAlign:"center"}}>
+          <div style={{fontSize:"36px",marginBottom:"14px"}}>⚠️</div>
+          <div style={{fontSize:"15px",fontWeight:700,color:"#fff",marginBottom:"8px"}}>Perfil não encontrado</div>
+          <div style={{fontSize:"11px",color:"rgba(255,255,255,0.5)",lineHeight:1.6,marginBottom:"16px"}}>
+            Sua conta foi criada mas o perfil de consultor não foi provisionado. Isso costuma indicar que o trigger de banco não rodou. Contate o administrador.
+          </div>
+          <div style={{fontSize:"10px",color:"rgba(255,255,255,0.3)",fontFamily:"monospace",marginBottom:"16px"}}>{profileErr}</div>
+          <button onClick={handleLogout} style={{padding:"10px 22px",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.1)",background:"transparent",color:"rgba(255,255,255,0.6)",fontSize:"12px",fontWeight:600,cursor:"pointer"}}>Sair</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return <div style={{minHeight:"100vh",background:"#09090b",color:"rgba(255,255,255,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",fontFamily:"system-ui,-apple-system,sans-serif"}}>Carregando perfil...</div>;
+  }
+
+  if (!profile.ativo) return <AccessBlockedScreen />;
+
+  return <MainApp session={session} profile={profile} onLogout={handleLogout} />;
+}
+
+function MainApp(props) {
   var [data,setData]=useState(function(){return makeData();});
   var [tab,setTab]=useState("Dividendos");var [isub,setIsub]=useState("Dollar Income");
   var [search,setSearch]=useState("");var [sf,setSf]=useState("all");
@@ -5094,42 +5446,20 @@ export default function App() {
   var [syncStatus, setSyncStatus] = useState("idle"); // idle, syncing, synced, error
   var [cloudReady, setCloudReady] = useState(0); // increments when cloud data arrives, forces re-mount
 
-  // Hidden admin mode: type "sunoia" anywhere to trigger password prompt
-  var [adminMode, setAdminMode] = useState(function(){
-    try { return localStorage.getItem("suno-admin-unlock") === "yes"; } catch(e) { return false; }
-  });
-  useEffect(function(){
-    if (adminMode) return; // already unlocked, skip listener
-    var buffer = "";
-    var SECRET_TRIGGER = "sunoia";
-    var ADMIN_PASSWORD = "Chopim159@";
-    function onKey(e){
-      // Ignore keystrokes when typing in inputs/textareas
-      var tag = (e.target && e.target.tagName) || "";
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
-      if (e.key && e.key.length === 1) {
-        buffer = (buffer + e.key.toLowerCase()).slice(-SECRET_TRIGGER.length);
-        if (buffer === SECRET_TRIGGER) {
-          buffer = "";
-          var pwd = window.prompt("Senha de administrador:");
-          if (pwd === ADMIN_PASSWORD) {
-            try { localStorage.setItem("suno-admin-unlock", "yes"); } catch(e) {}
-            setAdminMode(true);
-            window.alert("Modo admin ativado. Consulta IA disponível no menu Research.");
-          } else if (pwd !== null) {
-            window.alert("Senha incorreta.");
-          }
-        }
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return function(){ window.removeEventListener("keydown", onKey); };
-  }, [adminMode]);
+  // Auth state — passed in via props from AuthGate. Every authenticated consultor
+  // has access to the Consulta IA feature. Only role='admin' sees the Consultores admin panel.
+  var session = props.session;
+  var profile = props.profile; // { id, email, nome, role, ativo }
+  var isAdmin = profile && profile.role === "admin";
+  var adminMode = !!session; // any logged-in user sees advanced features (Consulta IA)
 
-  // Load: localStorage first (instant), then cloud (async override if newer)
-  // If cloud is empty but local has data, push local to cloud (initial migration)
+  // Load: localStorage first (instant), then cloud (async override if newer).
+  // Depends on session.user.id — triggers only once we have an authenticated user.
+  // If cloud is empty but local has data, push local to cloud (initial migration per user).
+  var sessionUserId = session && session.user ? session.user.id : null;
   useEffect(function(){
-    // 1. Local load (instant)
+    if (!sessionUserId) return; // wait for auth
+    // 1. Local load (instant) — note: client_profiles will be overwritten by the per-user cloud read below
     try{var s=localStorage.getItem("tt-v7");if(!s)s=localStorage.getItem("tt-v6");if(s)setData(migrateData(JSON.parse(s)));}catch(e){}
     // 2. Cloud load (async)
     setSyncStatus("syncing");
@@ -5178,16 +5508,17 @@ export default function App() {
       }
       checkDone();
     }).catch(function(){ checkDone(); });
-  },[]);
+  },[sessionUserId]);
 
   // Save: localStorage + cloud (debounced)
   useEffect(function(){
+    if (!sessionUserId) return;
     try{localStorage.setItem("tt-v7",JSON.stringify(data));}catch(e){}
     var hasContent = (data.Dividendos && data.Dividendos.length > 0) || (data.Valor && data.Valor.length > 0) || (data["Small Caps"] && data["Small Caps"].length > 0) || (data.Internacional && data.Internacional.length > 0);
     if (hasContent) {
       syncToCloud("app_data", {data: data, updated_at: new Date().toISOString()});
     }
-  },[data]);
+  },[data, sessionUserId]);
 
   // Force sync: push ALL local data to cloud (manual trigger)
   function forceSync() {
@@ -5255,7 +5586,7 @@ export default function App() {
   var pillarItems = {
     research: [{id:"teses",label:"Teses & Resultados"},{id:"carteiras",label:"Carteiras Suno"},{id:"fiis",label:"FIIs"},{id:"macro",label:"Macro & Viés"}].concat(adminMode ? [{id:"chat",label:"Consulta IA ✨"}] : []),
     consultoria: [{id:"recomendacoes",label:"Recomendações"},{id:"reuniao",label:"Preparo de Reunião"}],
-    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}]
+    clientes: [{id:"perfis",label:"Perfis & JB"},{id:"panorama",label:"Panorama de Resultados"},{id:"config",label:"Configurações"}].concat(isAdmin ? [{id:"consultores",label:"Consultores 👥"}] : [])
   };
   var pillarColors = {research:"#991b1b",consultoria:"#DC2626",clientes:"#ef4444"};
   var pillarLabels = {research:"Research",consultoria:"Consultoria",clientes:"Clientes"};
@@ -5273,7 +5604,7 @@ export default function App() {
           </div>
 
           {/* Navigation pillars */}
-          <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:"4px",flexWrap:"wrap",alignItems:"center"}}>
             {["research","consultoria","clientes"].map(function(pKey){
               var isActive = pilar === pKey;
               var color = pillarColors[pKey];
@@ -5292,6 +5623,17 @@ export default function App() {
                 </div>}
               </div>;
             })}
+
+            {/* User badge + logout */}
+            {profile && (
+              <div style={{display:"flex",alignItems:"center",gap:"8px",marginLeft:"10px",paddingLeft:"10px",borderLeft:"1px solid rgba(255,255,255,0.06)"}}>
+                <div style={{textAlign:"right",lineHeight:1.2}}>
+                  <div style={{fontSize:"11px",fontWeight:700,color:"#e2e8f0"}}>{profile.nome || profile.email.split("@")[0]}</div>
+                  <div style={{fontSize:"9px",color:isAdmin?"#fbbf24":"rgba(255,255,255,0.35)",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.5px"}}>{isAdmin?"Admin":"Consultor"}</div>
+                </div>
+                <button onClick={function(e){e.stopPropagation();if(props.onLogout)props.onLogout();}} title="Sair" style={{padding:"7px 10px",borderRadius:"7px",border:"1px solid rgba(255,255,255,0.08)",background:"transparent",color:"rgba(255,255,255,0.4)",cursor:"pointer",fontSize:"11px",fontWeight:600}}>Sair</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -5348,6 +5690,9 @@ export default function App() {
         {/* CLIENTES > PANORAMA */}
         {pilar==="clientes"&&page==="panorama"&&<ReportModal key={cloudReady} data={data} onClose={function(){nav("clientes","panorama");}} inline={true}/>}
 
+        {/* CLIENTES > CONSULTORES (admin-only) */}
+        {pilar==="clientes"&&page==="consultores"&&isAdmin&&<div style={{padding:"24px"}}><AdminConsultoresPanel/></div>}
+
         {/* CLIENTES > CONFIG */}
         {pilar==="clientes"&&page==="config"&&(<div style={{padding:"24px"}}>
           <div style={{fontSize:"16px",fontWeight:800,color:"#fff",marginBottom:"16px"}}>Configurações</div>
@@ -5394,4 +5739,9 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+/* Root export: gate the whole app behind authentication. */
+export default function App() {
+  return <AuthGate />;
 }

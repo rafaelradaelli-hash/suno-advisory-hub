@@ -1,33 +1,46 @@
 import { useState, useEffect, useRef } from 'react';
+import { supabase, SUPABASE_URL, SUPABASE_KEY, getAuthToken } from './supabaseClient';
 
-/* ── Supabase helpers ── */
-var SUPABASE_URL = "https://zjowgamtmfqzievqnrhg.supabase.co";
-var SUPABASE_KEY = "sb_publishable_L9M6LKA_YuyygIPs_t1oMA_Z-pF2kGz";
+/* ── Supabase helpers (session-aware) ──
+   fii_reports is a SHARED table — any authenticated consultor can read/write.
+   RLS on the server allows access only to authenticated users.
+*/
+async function _fiiHeaders(method) {
+  var token = await getAuthToken();
+  var h = { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + token };
+  if (method !== "GET") {
+    h["Content-Type"] = "application/json";
+    h["Prefer"] = "return=minimal";
+  }
+  return h;
+}
 
 async function fiiGet() {
-  var r = await fetch(SUPABASE_URL + "/rest/v1/fii_reports?select=*&order=updated_at.desc", {
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
-  });
+  var headers = await _fiiHeaders("GET");
+  var r = await fetch(SUPABASE_URL + "/rest/v1/fii_reports?select=*&order=updated_at.desc", { headers: headers });
   return r.json();
 }
 async function fiiInsert(body) {
+  var headers = await _fiiHeaders("POST");
   return fetch(SUPABASE_URL + "/rest/v1/fii_reports", {
     method: "POST",
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal" },
+    headers: headers,
     body: JSON.stringify(body)
   });
 }
 async function fiiUpdate(id, body) {
+  var headers = await _fiiHeaders("PATCH");
   return fetch(SUPABASE_URL + "/rest/v1/fii_reports?id=eq." + id, {
     method: "PATCH",
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY, "Content-Type": "application/json", "Prefer": "return=minimal" },
+    headers: headers,
     body: JSON.stringify(body)
   });
 }
 async function fiiDelete(id) {
+  var headers = await _fiiHeaders("DELETE");
   return fetch(SUPABASE_URL + "/rest/v1/fii_reports?id=eq." + id, {
     method: "DELETE",
-    headers: { "apikey": SUPABASE_KEY, "Authorization": "Bearer " + SUPABASE_KEY }
+    headers: headers
   });
 }
 
