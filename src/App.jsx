@@ -152,22 +152,84 @@ function uniqueArr(arr) { var s={}; var o=[]; for(var i=0;i<arr.length;i++){var 
    Cálculos de ciclo de vida, evolução patrimonial e sensibilidades.
    Todas as fórmulas são baseadas em matemática financeira clássica. */
 
-// Retorno real anual sugerido por perfil de risco
-// Taxa de acumulação (build-up): retorno durante fase de acumulação
+// Retorno real anual esperado na fase de acumulação, por perfil de risco.
+// Calibração: engenharia reversa de 2 Journey Books reais da Suno Consultoria
+// (João Pedro Pires Hirszman e José Roberto Campos Pimentel, dez/2025 — ambos Sofisticado).
+// O valor 7% para Sofisticado bateu com <0,01% em ambos os casos.
 function retornoRealPorPerfil(perfil) {
-  var map = {"Conservador": 0.04, "Moderado": 0.055, "Arrojado": 0.07, "Agressivo": 0.08};
-  return map[perfil] || 0.06;
-}
-
-// Taxa de retirada segura (safe withdrawal rate) — usada para calcular a renda perpétua.
-// Alinha com padrão da Suno Consultoria: retorno_renda = retorno_acumulação × 0.83 aprox.
-function taxaRetiradaPorPerfil(perfil) {
-  var map = {"Conservador": 0.033, "Moderado": 0.046, "Arrojado": 0.058, "Agressivo": 0.067};
+  var map = {
+    "Conservador": 0.03,
+    "Moderado": 0.05,
+    "Arrojado": 0.06,
+    "Sofisticado": 0.07,
+    "Agressivo": 0.08
+  };
   return map[perfil] || 0.05;
 }
 
+// Taxa de retirada usada para projetar a renda mensal (aplicada ao capital atual E futuro).
+// Calibração: 5,841% para Sofisticado — bateu com precisão de centavos nos 2 casos reais.
+function taxaRetiradaPorPerfil(perfil) {
+  var map = {
+    "Conservador": 0.0334,
+    "Moderado": 0.0459,
+    "Arrojado": 0.0584,
+    "Sofisticado": 0.05841,
+    "Agressivo": 0.0667
+  };
+  return map[perfil] || 0.0459;
+}
+
+// Taxa de retirada usada para calcular a META (capital necessário).
+// ⚠️ Depende do HORIZONTE DE INVESTIMENTO, não do perfil de risco.
+// Calibrados: "De 1 a 3 anos" (José Roberto) e "Acima de 10 anos" (João Pedro).
+// Horizontes intermediários são interpolação — precisam de mais amostras.
+function taxaMetaPorHorizonte(horizonte) {
+  var map = {
+    "Até 1 ano": 0.050,         // estimado (extrapolação)
+    "De 1 a 3 anos": 0.04353,   // CALIBRADO — José Roberto
+    "De 3 a 5 anos": 0.040,     // interpolação
+    "De 5 a 10 anos": 0.036,    // interpolação
+    "Acima de 10 anos": 0.03174 // CALIBRADO — João Pedro
+  };
+  return map[horizonte] || 0.04;
+}
+
+// Converte um horizonte em anos (número) para a label de categoria da Suno.
+function horizonteEmAnosParaLabel(anos) {
+  var n = Number(anos);
+  if (!isFinite(n) || n < 1) return "Até 1 ano";
+  if (n <= 1) return "Até 1 ano";
+  if (n <= 3) return "De 1 a 3 anos";
+  if (n <= 5) return "De 3 a 5 anos";
+  if (n <= 10) return "De 5 a 10 anos";
+  return "Acima de 10 anos";
+}
+
+// Idade fracionária em anos a partir da data de nascimento (ISO YYYY-MM-DD).
+// Retorna null se a data estiver ausente ou inválida.
+function idadeFracionariaDeBirthDate(birthDate, refDate) {
+  if (!birthDate) return null;
+  var bd = new Date(birthDate);
+  if (isNaN(bd.getTime())) return null;
+  var ref = refDate || new Date();
+  var diffMs = ref.getTime() - bd.getTime();
+  if (diffMs <= 0) return 0;
+  return diffMs / (1000 * 60 * 60 * 24 * 365.25);
+}
+
+// Idade real do perfil em anos (fracionária se houver birthDate).
+// Retrocompatibilidade: se o perfil antigo só tem prof.age, usa como inteiro.
+function idadeRealDoPerfil(prof, refDate) {
+  var frac = idadeFracionariaDeBirthDate(prof && prof.birthDate, refDate);
+  if (frac != null) return frac;
+  var n = Number(prof && prof.age);
+  return isFinite(n) && n > 0 ? n : 0;
+}
+
 // Capital Financeiro Futuro: VF = P*(1+r)^n + A*12*((1+r)^n - 1)/r
-// P = patrimônio atual, A = aporte mensal, r = retorno real anual, n = anos
+// Convenção anual com aporte anualizado — bateu com <0,01% vs PDFs Suno.
+// P = patrimônio atual, A = aporte mensal, r = retorno real anual, n = anos (fracionário)
 function capitalFinanceiroFuturo(patrimonio, aporteMensal, retornoAnual, anos) {
   var P = Number(patrimonio) || 0;
   var A = Number(aporteMensal) || 0;
@@ -179,18 +241,21 @@ function capitalFinanceiroFuturo(patrimonio, aporteMensal, retornoAnual, anos) {
   return P * fator + A * 12 * (fator - 1) / r;
 }
 
-// Capital Humano: valor presente da renda futura descontada a (1+r)^t
-// rendaMensal continua constante, desconta cada ano futuro
+// Capital Humano: VP dos fluxos mensais de salário até a aposentadoria.
+// Convenção mensal postecipada — divergente da do VF, mas é o que bate
+// melhor com o Journey Book Suno (resíduo observado ~0,5-1,5%).
+//   r_m = (1+r)^(1/12) - 1
+//   m   = n · 12
+//   CH  = renda_mensal · (1 - (1+r_m)^-m) / r_m
 function capitalHumano(rendaMensal, retornoAnual, anosAteAposentadoria) {
   var R = Number(rendaMensal) || 0;
   var r = Number(retornoAnual) || 0;
   var n = Number(anosAteAposentadoria) || 0;
   if (n <= 0 || R <= 0) return 0;
-  var total = 0;
-  for (var t = 1; t <= n; t++) {
-    total += (R * 12) / Math.pow(1 + r, t);
-  }
-  return total;
+  if (r === 0) return R * 12 * n;
+  var rm = Math.pow(1 + r, 1/12) - 1;
+  var m = n * 12;
+  return R * (1 - Math.pow(1 + rm, -m)) / rm;
 }
 
 // Renda perpétua = Capital * retorno real (saque indefinido sem consumir principal)
@@ -225,32 +290,38 @@ function simularEvolucao(patrimonio, aporteMensal, retornoAnual, idadeInicial, a
   return snapshots;
 }
 
-// Sensibilidade: varia UMA variável e retorna array {valor, patrimonio, renda}
-function tabelaSensibilidadeAporte(patrimonio, aporteBase, retornoAnual, anos, deltas) {
+// Sensibilidade: varia UMA variável e retorna array {valor, patrimonio, renda}.
+// Nas sensibilidades de aporte e idade, a RENDA usa a taxa de retirada do perfil
+// (fixa) aplicada sobre o capital resultante — foi o comportamento observado no
+// Journey Book Suno (ex.: mesmo com retorno variando, a renda continua em 5,841%).
+function tabelaSensibilidadeAporte(patrimonio, aporteBase, retornoAnual, anos, deltas, taxaRenda) {
   var out = [];
+  var tr = (taxaRenda != null ? taxaRenda : retornoAnual);
   deltas.forEach(function(d) {
     var aporte = aporteBase + d;
     var cap = capitalFinanceiroFuturo(patrimonio, aporte, retornoAnual, anos);
-    out.push({valor: aporte, delta: d, patrimonio: cap, renda: rendaMensalPerpetua(cap, retornoAnual)});
+    out.push({valor: aporte, delta: d, patrimonio: cap, renda: (cap * tr) / 12});
   });
   return out;
 }
 
-function tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anos, taxas) {
+function tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anos, taxas, taxaRenda) {
   var out = [];
+  var tr = (taxaRenda != null ? taxaRenda : 0.0459);
   taxas.forEach(function(r) {
     var cap = capitalFinanceiroFuturo(patrimonio, aporteMensal, r, anos);
-    out.push({valor: r, patrimonio: cap, renda: rendaMensalPerpetua(cap, r)});
+    out.push({valor: r, patrimonio: cap, renda: (cap * tr) / 12});
   });
   return out;
 }
 
-function tabelaSensibilidadeIdade(patrimonio, aporteMensal, retornoAnual, idadeAtual, idadesAposentadoria) {
+function tabelaSensibilidadeIdade(patrimonio, aporteMensal, retornoAnual, idadeAtual, idadesAposentadoria, taxaRenda) {
   var out = [];
+  var tr = (taxaRenda != null ? taxaRenda : retornoAnual);
   idadesAposentadoria.forEach(function(i) {
     var anos = Math.max(0, i - idadeAtual);
     var cap = capitalFinanceiroFuturo(patrimonio, aporteMensal, retornoAnual, anos);
-    out.push({valor: i, patrimonio: cap, renda: rendaMensalPerpetua(cap, retornoAnual)});
+    out.push({valor: i, patrimonio: cap, renda: (cap * tr) / 12});
   });
   return out;
 }
@@ -269,83 +340,102 @@ function fmtPct(v, decimals) {
   return (n * 100).toFixed(decimals===undefined?1:decimals) + "%";
 }
 
-// Retorna objeto completo com todos os cálculos de planejamento para um perfil
-function calcularPlanejamento(prof) {
-  var idade = Number(prof.age) || 0;
+// Retorna objeto completo com todos os cálculos de planejamento para um perfil.
+// Usa idade fracionária real se prof.birthDate existir; caso contrário cai em prof.age (legacy).
+function calcularPlanejamento(prof, refDate) {
+  var ref = refDate || new Date();
+  var idadeReal = idadeRealDoPerfil(prof, ref);           // fracionária, ex: 60.6215
+  var idadeExib = Math.floor(idadeReal);                  // idade inteira exibida
   var patrimonio = Number(prof.totalWealth) || 0;
   var rendaMensal = Number(prof.monthlyIncome) || 0;
   var aporteMensal = Number(prof.monthlyContribution) || 0;
-  var idadeApos = Number(prof.retirementAge) || (idade + (Number(prof.horizon) || 20));
+  var idadeApos = Number(prof.retirementAge) || (Math.ceil(idadeReal) + (Number(prof.horizon) || 20));
   var rendaDesejada = Number(prof.desiredIncome) || rendaMensal;
   var gastosMensais = Number(prof.monthlyExpenses) || rendaMensal * 0.7;
   var retorno = retornoRealPorPerfil(prof.riskProfile);
   var taxaRenda = taxaRetiradaPorPerfil(prof.riskProfile);
-  var anosAteApos = Math.max(0, idadeApos - idade);
+  var horizonteLabel = horizonteEmAnosParaLabel(prof.horizon);
+  var taxaMeta = taxaMetaPorHorizonte(horizonteLabel);
+  var anosAteApos = Math.max(0, idadeApos - idadeReal);
 
   // Cálculos principais
   var capitalFinal = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, anosAteApos);
   var capitalHum = capitalHumano(rendaMensal, retorno, anosAteApos);
   var riquezaTotal = capitalFinal + capitalHum;
-  var capitalNecessario = capitalNecessarioParaRenda(rendaDesejada, taxaRenda);
+  var capitalNecessario = capitalNecessarioParaRenda(rendaDesejada, taxaMeta);
   var pctMeta = capitalNecessario > 0 ? capitalFinal / capitalNecessario : 0;
-  // Renda usa taxa de retirada (safe withdrawal rate), não retorno de acumulação
+  // Renda usa a taxa de retirada do perfil, não o retorno de acumulação
   var rendaAoAposentar = (capitalFinal * taxaRenda) / 12;
   var rendaHojeEstim = (patrimonio * taxaRenda) / 12;
 
-  // Idade para meta: resolve P*(1+r)^n + A*12*((1+r)^n-1)/r = capitalNecessario
-  // Iterativo: testa anos até atingir
+  // Idade p/ meta: busca iterativa em meses (mantendo aporte atual).
+  // ⚠️ NOTA: cálculo heurístico — não bateu com Journey Book Suno em amostra
+  // com aporte > 0 (JR diz 65a6m, fórmula dá 68a5m). Calibrar com mais amostras.
   var idadeParaMeta = null;
-  for (var a = 0; a <= 60; a++) {
-    var capA = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a);
-    if (capA >= capitalNecessario) {
-      // Refina em meses
-      var meses = 0;
-      for (var m = 0; m < 12; m++) {
-        var capAM = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a - 1 + m/12);
-        if (capAM >= capitalNecessario) { meses = m; break; }
+  if (capitalNecessario > 0) {
+    for (var a = 0; a <= 60; a++) {
+      var capA = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a);
+      if (capA >= capitalNecessario) {
+        var meses = 0;
+        for (var m = 0; m < 12; m++) {
+          var capAM = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a - 1 + m/12);
+          if (capAM >= capitalNecessario) { meses = m; break; }
+        }
+        idadeParaMeta = {anos: a, meses: meses, idade: idadeExib + a};
+        break;
       }
-      idadeParaMeta = {anos: a, meses: meses, idade: idade + a};
-      break;
     }
   }
 
-  // Aporte necessário para atingir meta na idade de aposentadoria desejada
-  // A = (capitalNecessario - P*(1+r)^n) / (12 * ((1+r)^n - 1) / r)
+  // Aporte necessário para atingir meta na idade de aposentadoria desejada.
+  // ⚠️ NOTA: cálculo heurístico — não bateu com Journey Book Suno em amostra
+  // com aporte > 0 (JR diz R$ 44.765, fórmula dá R$ 92.380). Calibrar com mais amostras.
   var aporteNecessario = 0;
-  if (anosAteApos > 0 && retorno > 0) {
+  if (anosAteApos > 0 && retorno > 0 && capitalNecessario > 0) {
     var fator = Math.pow(1 + retorno, anosAteApos);
     var denom = 12 * (fator - 1) / retorno;
     aporteNecessario = Math.max(0, (capitalNecessario - patrimonio * fator) / denom);
   }
 
-  // Evolução ano a ano (a cada 2 anos, até 20 anos depois da aposentadoria)
-  var anosProjecao = anosAteApos + 8;
-  var evolucaoCompleta = simularEvolucao(patrimonio, aporteMensal, retorno, idade, anosProjecao);
+  // Evolução ano a ano (a cada 2 anos, até 8 anos depois da aposentadoria)
+  var anosProjecao = Math.ceil(anosAteApos) + 8;
+  var evolucaoCompleta = simularEvolucao(patrimonio, aporteMensal, retorno, idadeExib, anosProjecao);
   var evolucaoBienal = evolucaoCompleta.filter(function(s){ return s.ano % 2 === 0; });
 
   // Série ciclo de vida (anual, para gráfico de linha)
   var cicloVida = [];
-  for (var t = 0; t <= anosAteApos; t++) {
+  var anosInteiros = Math.ceil(anosAteApos);
+  for (var t = 0; t <= anosInteiros; t++) {
     var capF = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, t);
-    var capH = capitalHumano(rendaMensal, retorno, anosAteApos - t);
+    var capH = capitalHumano(rendaMensal, retorno, Math.max(0, anosAteApos - t));
     cicloVida.push({
-      idade: idade + t,
+      idade: idadeExib + t,
       capitalFinanceiro: capF,
       capitalHumano: capH,
       riquezaTotal: capF + capH
     });
   }
 
-  // Sensibilidades
-  var sensAporte = tabelaSensibilidadeAporte(patrimonio, aporteMensal, retorno, anosAteApos, [-4000, -2000, 0, 2000, 4000]);
-  var sensRetorno = tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anosAteApos, [0.04, 0.05, 0.06, 0.065, 0.07]);
-  var sensIdade = tabelaSensibilidadeIdade(patrimonio, aporteMensal, retorno, idade, [idadeApos - 2, idadeApos - 1, idadeApos, idadeApos + 1, idadeApos + 2]);
+  // Sensibilidades — usam a taxa de retirada fixa para a coluna "Renda"
+  var sensAporte = tabelaSensibilidadeAporte(patrimonio, aporteMensal, retorno, anosAteApos, [-4000, -2000, 0, 2000, 4000], taxaRenda);
+  var sensRetorno = tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anosAteApos, [0.04, 0.05, 0.06, 0.065, 0.07], taxaRenda);
+  var sensIdade = tabelaSensibilidadeIdade(patrimonio, aporteMensal, retorno, idadeReal, [idadeApos - 2, idadeApos - 1, idadeApos, idadeApos + 1, idadeApos + 2], taxaRenda);
 
   return {
     // Entradas
-    idade: idade, patrimonio: patrimonio, rendaMensal: rendaMensal, aporteMensal: aporteMensal,
-    idadeApos: idadeApos, rendaDesejada: rendaDesejada, gastosMensais: gastosMensais,
-    retorno: retorno, anosAteApos: anosAteApos,
+    idade: idadeExib,
+    idadeReal: idadeReal,
+    patrimonio: patrimonio,
+    rendaMensal: rendaMensal,
+    aporteMensal: aporteMensal,
+    idadeApos: idadeApos,
+    rendaDesejada: rendaDesejada,
+    gastosMensais: gastosMensais,
+    retorno: retorno,
+    taxaRenda: taxaRenda,
+    taxaMeta: taxaMeta,
+    horizonteLabel: horizonteLabel,
+    anosAteApos: anosAteApos,
     // Resultados principais
     capitalFinal: capitalFinal,
     capitalHumano: capitalHum,
@@ -1249,13 +1339,13 @@ function ReportModal(p) {
 
 /* ─── Client Profiles System ─── */
 var ALLOC_CLASSES = ["Renda Fixa","Ações BR","FIIs","Internacional","Alternativos"];
-var RISK_PROFILES = ["Conservador","Moderado","Arrojado","Agressivo"];
+var RISK_PROFILES = ["Conservador","Moderado","Arrojado","Sofisticado","Agressivo"];
 var EXP_LEVELS = ["Iniciante","Intermediário","Avançado"];
 
 function makeEmptyProfile() {
   return {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
-    name: "", age: "", profession: "", maritalStatus: "",
+    name: "", birthDate: "", age: "", profession: "", maritalStatus: "",
     totalWealth: "", monthlyIncome: "", monthlyContribution: "",
     retirementAge: "", desiredIncome: "", monthlyExpenses: "",
     experience: "Intermediário", riskProfile: "Moderado",
@@ -1319,13 +1409,27 @@ function ClientProfileEditor(p) {
   var totalTarget = ALLOC_CLASSES.reduce(function(s,c){return s + ((allocObj[c]||{}).target||0);},0);
   var totalCurrent = ALLOC_CLASSES.reduce(function(s,c){return s + ((allocObj[c]||{}).current||0);},0);
 
+  // Idade derivada da data de nascimento (fonte de verdade para o planejamento).
+  // Se não houver birthDate, cai em prof.age (campo legado) para não quebrar cadastros antigos.
+  var idadeDerivada = (function(){
+    var frac = idadeFracionariaDeBirthDate(prof.birthDate);
+    if (frac != null) return Math.floor(frac);
+    var n = Number(prof.age);
+    return isFinite(n) && n > 0 ? n : null;
+  })();
+  var hojeISO = new Date().toISOString().slice(0,10);
+
   return (
     <div>
       {/* Personal data */}
       <div style={secTitle}>Dados Pessoais</div>
       <div style={{display:"grid",gridTemplateColumns:compact?"1fr 1fr":"1fr 1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
         <div><label style={lS}>Nome completo *</label><input value={prof.name||""} onChange={function(e){set("name",e.target.value);}} style={iS}/></div>
-        <div><label style={lS}>Idade</label><input value={prof.age||""} onChange={function(e){set("age",e.target.value);}} placeholder="Ex: 45" type="number" style={iS}/></div>
+        <div>
+          <label style={lS}>Data de nascimento</label>
+          <input type="date" max={hojeISO} value={prof.birthDate||""} onChange={function(e){set("birthDate",e.target.value);}} style={iS}/>
+          {idadeDerivada != null && <div style={{fontSize:"9px",color:"rgba(255,255,255,0.35)",marginTop:"3px"}}>{idadeDerivada} anos</div>}
+        </div>
         <div><label style={lS}>Profissão</label><input value={prof.profession||""} onChange={function(e){set("profession",e.target.value);}} style={iS}/></div>
         <div><label style={lS}>Estado civil</label><select value={prof.maritalStatus||""} onChange={function(e){set("maritalStatus",e.target.value);}} style={selS}>
           <option value="" style={{background:"#1a1a1a"}}>—</option>
@@ -1439,12 +1543,13 @@ function ClientEditorWithTabs(p) {
 /* ─── Planning Tab: Ciclo de Vida + Evolução + Sensibilidades ─── */
 function PlanningTab(p) {
   var prof = p.profile || {};
-  // Verifica se há dados mínimos
-  var canCalc = prof.age && prof.totalWealth && prof.monthlyIncome;
+  // Verifica se há dados mínimos (birthDate é preferido; age funciona como fallback)
+  var temIdade = !!prof.birthDate || (prof.age && Number(prof.age) > 0);
+  var canCalc = temIdade && prof.totalWealth && prof.monthlyIncome;
   if (!canCalc) {
     return <div style={{padding:"40px 20px",textAlign:"center",color:"rgba(255,255,255,0.3)",fontSize:"12px",lineHeight:1.7}}>
       Preencha na aba <b style={{color:"rgba(255,255,255,0.6)"}}>Perfil</b>:<br/>
-      <span style={{fontSize:"11px"}}>Idade · Patrimônio total · Renda mensal</span>
+      <span style={{fontSize:"11px"}}>Data de nascimento · Patrimônio total · Renda mensal</span>
     </div>;
   }
   var planej = calcularPlanejamento(prof);
