@@ -372,19 +372,36 @@ function calcularPlanejamento(prof, refDate) {
   }
 
   // ─── Séries para gráficos ────────────────────────────────────────────
-  // Ciclo de vida: do ano 0 (idade atual) até a aposentadoria, ano a ano.
+  // Ciclo de vida: ponto inicial em idade fracionária (hoje), pontos intermediários
+  // ano a ano, último ponto exato na idade de aposentadoria. Evita "dip" visual
+  // no final que acontece quando o último ponto está fora do range real de tempo.
   var cicloVida = [];
-  var anosInteiros = Math.ceil(anosAteApos);
-  for (var t = 0; t <= anosInteiros; t++) {
-    var diasPassados = Math.min(diasAteApos, t * 365);
-    var diasRestantes = Math.max(0, diasAteApos - t * 365);
-    var capF = capitalFinanceiroDiario(patrimonio, aporteMensal, retorno, diasPassados);
-    var capH = capitalHumanoDiario(rendaMensal, retorno, diasRestantes);
+  cicloVida.push({
+    idade: idadeReal,
+    capitalFinanceiro: patrimonio,
+    capitalHumano: capitalHum,
+    riquezaTotal: patrimonio + capitalHum
+  });
+  var anosFloor = Math.floor(anosAteApos);
+  for (var t = 1; t <= anosFloor; t++) {
+    var diasPassados = t * 365;
+    var diasRestantes = Math.max(0, diasAteApos - diasPassados);
+    var capFt = capitalFinanceiroDiario(patrimonio, aporteMensal, retorno, diasPassados);
+    var capHt = capitalHumanoDiario(rendaMensal, retorno, diasRestantes);
     cicloVida.push({
-      idade: idadeExib + t,
-      capitalFinanceiro: capF,
-      capitalHumano: capH,
-      riquezaTotal: capF + capH
+      idade: idadeReal + t,
+      capitalFinanceiro: capFt,
+      capitalHumano: capHt,
+      riquezaTotal: capFt + capHt
+    });
+  }
+  // Ponto final exato na data de aposentadoria (se houver resíduo de tempo)
+  if (diasAteApos > anosFloor * 365 + 1) {
+    cicloVida.push({
+      idade: idadeApos,
+      capitalFinanceiro: capitalFinal,
+      capitalHumano: 0,
+      riquezaTotal: capitalFinal
     });
   }
 
@@ -1623,8 +1640,10 @@ function PlanningTab(p) {
           {/* Riqueza Total */}
           <path d={path(function(c){return c.riquezaTotal;})} stroke="#DC2626" strokeWidth="2" fill="none"/>
           {/* Eixo X (idades) */}
-          {[minIdade, Math.round((minIdade+maxIdade)/2), maxIdade].map(function(i){
-            return <text key={i} x={x(i)} y={gH-pad+12} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="middle">{i}</text>;
+          {[{pos:minIdade,label:Math.round(minIdade)},
+            {pos:(minIdade+maxIdade)/2,label:Math.round((minIdade+maxIdade)/2)},
+            {pos:maxIdade,label:Math.round(maxIdade)}].map(function(it,idx){
+            return <text key={idx} x={x(it.pos)} y={gH-pad+12} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="middle">{it.label}</text>;
           })}
           {/* Legenda */}
           <g transform={"translate(" + pad + "," + 12 + ")"}>
@@ -1906,8 +1925,8 @@ function generatePlanningPDF(prof, planej) {
       setF(CLR.accent); doc.circle(cx+80, cy-3, 1, "F"); doc.text("Riqueza Total", cx+83, cy-2);
       // X labels
       doc.setFontSize(7); setC(CLR.muted);
-      doc.text(String(minI), xx(minI), cy+ch+4, {align:"center"});
-      doc.text(String(maxI), xx(maxI), cy+ch+4, {align:"center"});
+      doc.text(String(Math.round(minI)), xx(minI), cy+ch+4, {align:"center"});
+      doc.text(String(Math.round(maxI)), xx(maxI), cy+ch+4, {align:"center"});
       doc.text(String(Math.round((minI+maxI)/2)), xx((minI+maxI)/2), cy+ch+4, {align:"center"});
     }
     function drawChartEvolution(cx, cy, cw, ch, pln) {
