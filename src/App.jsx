@@ -1740,10 +1740,6 @@ function PlanningTab(p) {
         <SensTable title="Idade aposent." rows={planej.sensIdade} fmtKey={function(r){return r.valor + " anos";}} highlight={planej.idadeApos}/>
       </div>
 
-      {/* Export PDF */}
-      <button onClick={function(){generatePlanningPDF(prof, planej);}} style={{width:"100%",marginTop:"14px",padding:"12px",background:"#DC2626",color:"#fff",border:"none",borderRadius:"8px",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>
-        Exportar Journey Book em PDF
-      </button>
     </div>
   );
 }
