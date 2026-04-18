@@ -206,6 +206,17 @@ function horizonteEmAnosParaLabel(anos) {
   return "Acima de 10 anos";
 }
 
+// Data de referência para os cálculos:
+// - Se o perfil tem prof.referenceDate preenchido e válido, usa essa data (reproduz Journey Book antigo).
+// - Senão, usa a data atual.
+function dataReferenciaDoPerfil(prof, fallback) {
+  if (prof && prof.referenceDate) {
+    var d = new Date(prof.referenceDate);
+    if (!isNaN(d.getTime())) return d;
+  }
+  return fallback || new Date();
+}
+
 // Idade fracionária em anos a partir da data de nascimento (ISO YYYY-MM-DD).
 // Retorna null se a data estiver ausente ou inválida.
 function idadeFracionariaDeBirthDate(birthDate, refDate) {
@@ -221,7 +232,8 @@ function idadeFracionariaDeBirthDate(birthDate, refDate) {
 // Idade real do perfil em anos (fracionária se houver birthDate).
 // Retrocompatibilidade: se o perfil antigo só tem prof.age, usa como inteiro.
 function idadeRealDoPerfil(prof, refDate) {
-  var frac = idadeFracionariaDeBirthDate(prof && prof.birthDate, refDate);
+  var ref = refDate || dataReferenciaDoPerfil(prof);
+  var frac = idadeFracionariaDeBirthDate(prof && prof.birthDate, ref);
   if (frac != null) return frac;
   var n = Number(prof && prof.age);
   return isFinite(n) && n > 0 ? n : 0;
@@ -342,8 +354,9 @@ function fmtPct(v, decimals) {
 
 // Retorna objeto completo com todos os cálculos de planejamento para um perfil.
 // Usa idade fracionária real se prof.birthDate existir; caso contrário cai em prof.age (legacy).
+// Usa prof.referenceDate se preenchido (reproduz Journey Book antigo), senão usa hoje.
 function calcularPlanejamento(prof, refDate) {
-  var ref = refDate || new Date();
+  var ref = refDate || dataReferenciaDoPerfil(prof);
   var idadeReal = idadeRealDoPerfil(prof, ref);           // fracionária, ex: 60.6215
   var idadeExib = Math.floor(idadeReal);                  // idade inteira exibida
   var patrimonio = Number(prof.totalWealth) || 0;
@@ -425,6 +438,7 @@ function calcularPlanejamento(prof, refDate) {
     // Entradas
     idade: idadeExib,
     idadeReal: idadeReal,
+    dataReferencia: ref,
     patrimonio: patrimonio,
     rendaMensal: rendaMensal,
     aporteMensal: aporteMensal,
@@ -1348,6 +1362,7 @@ function makeEmptyProfile() {
     name: "", birthDate: "", age: "", profession: "", maritalStatus: "",
     totalWealth: "", monthlyIncome: "", monthlyContribution: "",
     retirementAge: "", desiredIncome: "", monthlyExpenses: "",
+    referenceDate: "", // vazio = usa hoje. Preencher para reproduzir Journey Book antigo.
     experience: "Intermediário", riskProfile: "Moderado",
     horizon: "5", hasEmergencyReserve: true, liquidityNeed: "Baixa",
     longTermGoals: "", strategy: "",
@@ -1411,8 +1426,10 @@ function ClientProfileEditor(p) {
 
   // Idade derivada da data de nascimento (fonte de verdade para o planejamento).
   // Se não houver birthDate, cai em prof.age (campo legado) para não quebrar cadastros antigos.
+  // Usa a data de referência do perfil (ou hoje) para o cálculo.
   var idadeDerivada = (function(){
-    var frac = idadeFracionariaDeBirthDate(prof.birthDate);
+    var ref = dataReferenciaDoPerfil(prof);
+    var frac = idadeFracionariaDeBirthDate(prof.birthDate, ref);
     if (frac != null) return Math.floor(frac);
     var n = Number(prof.age);
     return isFinite(n) && n > 0 ? n : null;
@@ -1455,6 +1472,13 @@ function ClientProfileEditor(p) {
         <div><label style={lS}>Idade de aposentadoria</label><input value={prof.retirementAge||""} onChange={function(e){set("retirementAge",e.target.value);}} placeholder="Ex: 60" type="number" style={iS}/></div>
         <div><label style={lS}>Renda mensal desejada na aposentadoria (R$)</label><input value={prof.desiredIncome||""} onChange={function(e){set("desiredIncome",e.target.value);}} placeholder="Ex: 25000" style={iS}/></div>
         <div><label style={lS}>Gastos mensais atuais (R$)</label><input value={prof.monthlyExpenses||""} onChange={function(e){set("monthlyExpenses",e.target.value);}} placeholder="Ex: 15000" style={iS}/></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr",gap:"8px",marginBottom:"8px"}}>
+        <div>
+          <label style={lS}>Data de referência do cálculo (opcional)</label>
+          <input type="date" max={hojeISO} value={prof.referenceDate||""} onChange={function(e){set("referenceDate",e.target.value);}} style={iS}/>
+          <div style={{fontSize:"9px",color:"rgba(255,255,255,0.35)",marginTop:"3px"}}>Em branco = cálculos usam a data de hoje. Preencha para reproduzir um Journey Book emitido em outra data.</div>
+        </div>
       </div>
 
       {/* Investor profile */}
