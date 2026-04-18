@@ -148,6 +148,226 @@ function sanitizePDFText(s) {
 }
 function uniqueArr(arr) { var s={}; var o=[]; for(var i=0;i<arr.length;i++){var v=arr[i]; if(v&&!s[v]){s[v]=true;o.push(v);}} return o; }
 
+/* ═══ FINANCIAL PLANNING MATH ═══
+   Cálculos de ciclo de vida, evolução patrimonial e sensibilidades.
+   Todas as fórmulas são baseadas em matemática financeira clássica. */
+
+// Retorno real anual sugerido por perfil de risco
+// Taxa de acumulação (build-up): retorno durante fase de acumulação
+function retornoRealPorPerfil(perfil) {
+  var map = {"Conservador": 0.04, "Moderado": 0.055, "Arrojado": 0.07, "Agressivo": 0.08};
+  return map[perfil] || 0.06;
+}
+
+// Taxa de retirada segura (safe withdrawal rate) — usada para calcular a renda perpétua.
+// Alinha com padrão da Suno Consultoria: retorno_renda = retorno_acumulação × 0.83 aprox.
+function taxaRetiradaPorPerfil(perfil) {
+  var map = {"Conservador": 0.033, "Moderado": 0.046, "Arrojado": 0.058, "Agressivo": 0.067};
+  return map[perfil] || 0.05;
+}
+
+// Capital Financeiro Futuro: VF = P*(1+r)^n + A*12*((1+r)^n - 1)/r
+// P = patrimônio atual, A = aporte mensal, r = retorno real anual, n = anos
+function capitalFinanceiroFuturo(patrimonio, aporteMensal, retornoAnual, anos) {
+  var P = Number(patrimonio) || 0;
+  var A = Number(aporteMensal) || 0;
+  var r = Number(retornoAnual) || 0;
+  var n = Number(anos) || 0;
+  if (n <= 0) return P;
+  if (r === 0) return P + A * 12 * n;
+  var fator = Math.pow(1 + r, n);
+  return P * fator + A * 12 * (fator - 1) / r;
+}
+
+// Capital Humano: valor presente da renda futura descontada a (1+r)^t
+// rendaMensal continua constante, desconta cada ano futuro
+function capitalHumano(rendaMensal, retornoAnual, anosAteAposentadoria) {
+  var R = Number(rendaMensal) || 0;
+  var r = Number(retornoAnual) || 0;
+  var n = Number(anosAteAposentadoria) || 0;
+  if (n <= 0 || R <= 0) return 0;
+  var total = 0;
+  for (var t = 1; t <= n; t++) {
+    total += (R * 12) / Math.pow(1 + r, t);
+  }
+  return total;
+}
+
+// Renda perpétua = Capital * retorno real (saque indefinido sem consumir principal)
+function rendaMensalPerpetua(capital, retornoAnual) {
+  var c = Number(capital) || 0;
+  var r = Number(retornoAnual) || 0;
+  return (c * r) / 12;
+}
+
+// Capital necessário para gerar uma renda mensal desejada perpetuamente
+function capitalNecessarioParaRenda(rendaDesejadaMensal, retornoAnual) {
+  var R = Number(rendaDesejadaMensal) || 0;
+  var r = Number(retornoAnual) || 0;
+  if (r <= 0) return 0;
+  return (R * 12) / r;
+}
+
+// Simula evolução patrimonial ano a ano, retornando array de snapshots
+function simularEvolucao(patrimonio, aporteMensal, retornoAnual, idadeInicial, anos) {
+  var snapshots = [];
+  var P = Number(patrimonio) || 0;
+  var A = Number(aporteMensal) || 0;
+  var r = Number(retornoAnual) || 0;
+  var idade = Number(idadeInicial) || 0;
+  for (var t = 0; t <= anos; t++) {
+    snapshots.push({
+      ano: t,
+      idade: idade + t,
+      patrimonio: P * Math.pow(1 + r, t) + (r > 0 ? A * 12 * (Math.pow(1 + r, t) - 1) / r : A * 12 * t)
+    });
+  }
+  return snapshots;
+}
+
+// Sensibilidade: varia UMA variável e retorna array {valor, patrimonio, renda}
+function tabelaSensibilidadeAporte(patrimonio, aporteBase, retornoAnual, anos, deltas) {
+  var out = [];
+  deltas.forEach(function(d) {
+    var aporte = aporteBase + d;
+    var cap = capitalFinanceiroFuturo(patrimonio, aporte, retornoAnual, anos);
+    out.push({valor: aporte, delta: d, patrimonio: cap, renda: rendaMensalPerpetua(cap, retornoAnual)});
+  });
+  return out;
+}
+
+function tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anos, taxas) {
+  var out = [];
+  taxas.forEach(function(r) {
+    var cap = capitalFinanceiroFuturo(patrimonio, aporteMensal, r, anos);
+    out.push({valor: r, patrimonio: cap, renda: rendaMensalPerpetua(cap, r)});
+  });
+  return out;
+}
+
+function tabelaSensibilidadeIdade(patrimonio, aporteMensal, retornoAnual, idadeAtual, idadesAposentadoria) {
+  var out = [];
+  idadesAposentadoria.forEach(function(i) {
+    var anos = Math.max(0, i - idadeAtual);
+    var cap = capitalFinanceiroFuturo(patrimonio, aporteMensal, retornoAnual, anos);
+    out.push({valor: i, patrimonio: cap, renda: rendaMensalPerpetua(cap, retornoAnual)});
+  });
+  return out;
+}
+
+// Formata R$ no padrão brasileiro
+function fmtBRL(v) {
+  var n = Number(v) || 0;
+  return "R$ " + n.toLocaleString("pt-BR", {minimumFractionDigits: 0, maximumFractionDigits: 0});
+}
+function fmtBRLCents(v) {
+  var n = Number(v) || 0;
+  return "R$ " + n.toLocaleString("pt-BR", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+function fmtPct(v, decimals) {
+  var n = Number(v) || 0;
+  return (n * 100).toFixed(decimals===undefined?1:decimals) + "%";
+}
+
+// Retorna objeto completo com todos os cálculos de planejamento para um perfil
+function calcularPlanejamento(prof) {
+  var idade = Number(prof.age) || 0;
+  var patrimonio = Number(prof.totalWealth) || 0;
+  var rendaMensal = Number(prof.monthlyIncome) || 0;
+  var aporteMensal = Number(prof.monthlyContribution) || 0;
+  var idadeApos = Number(prof.retirementAge) || (idade + (Number(prof.horizon) || 20));
+  var rendaDesejada = Number(prof.desiredIncome) || rendaMensal;
+  var gastosMensais = Number(prof.monthlyExpenses) || rendaMensal * 0.7;
+  var retorno = retornoRealPorPerfil(prof.riskProfile);
+  var taxaRenda = taxaRetiradaPorPerfil(prof.riskProfile);
+  var anosAteApos = Math.max(0, idadeApos - idade);
+
+  // Cálculos principais
+  var capitalFinal = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, anosAteApos);
+  var capitalHum = capitalHumano(rendaMensal, retorno, anosAteApos);
+  var riquezaTotal = capitalFinal + capitalHum;
+  var capitalNecessario = capitalNecessarioParaRenda(rendaDesejada, taxaRenda);
+  var pctMeta = capitalNecessario > 0 ? capitalFinal / capitalNecessario : 0;
+  // Renda usa taxa de retirada (safe withdrawal rate), não retorno de acumulação
+  var rendaAoAposentar = (capitalFinal * taxaRenda) / 12;
+  var rendaHojeEstim = (patrimonio * taxaRenda) / 12;
+
+  // Idade para meta: resolve P*(1+r)^n + A*12*((1+r)^n-1)/r = capitalNecessario
+  // Iterativo: testa anos até atingir
+  var idadeParaMeta = null;
+  for (var a = 0; a <= 60; a++) {
+    var capA = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a);
+    if (capA >= capitalNecessario) {
+      // Refina em meses
+      var meses = 0;
+      for (var m = 0; m < 12; m++) {
+        var capAM = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, a - 1 + m/12);
+        if (capAM >= capitalNecessario) { meses = m; break; }
+      }
+      idadeParaMeta = {anos: a, meses: meses, idade: idade + a};
+      break;
+    }
+  }
+
+  // Aporte necessário para atingir meta na idade de aposentadoria desejada
+  // A = (capitalNecessario - P*(1+r)^n) / (12 * ((1+r)^n - 1) / r)
+  var aporteNecessario = 0;
+  if (anosAteApos > 0 && retorno > 0) {
+    var fator = Math.pow(1 + retorno, anosAteApos);
+    var denom = 12 * (fator - 1) / retorno;
+    aporteNecessario = Math.max(0, (capitalNecessario - patrimonio * fator) / denom);
+  }
+
+  // Evolução ano a ano (a cada 2 anos, até 20 anos depois da aposentadoria)
+  var anosProjecao = anosAteApos + 8;
+  var evolucaoCompleta = simularEvolucao(patrimonio, aporteMensal, retorno, idade, anosProjecao);
+  var evolucaoBienal = evolucaoCompleta.filter(function(s){ return s.ano % 2 === 0; });
+
+  // Série ciclo de vida (anual, para gráfico de linha)
+  var cicloVida = [];
+  for (var t = 0; t <= anosAteApos; t++) {
+    var capF = capitalFinanceiroFuturo(patrimonio, aporteMensal, retorno, t);
+    var capH = capitalHumano(rendaMensal, retorno, anosAteApos - t);
+    cicloVida.push({
+      idade: idade + t,
+      capitalFinanceiro: capF,
+      capitalHumano: capH,
+      riquezaTotal: capF + capH
+    });
+  }
+
+  // Sensibilidades
+  var sensAporte = tabelaSensibilidadeAporte(patrimonio, aporteMensal, retorno, anosAteApos, [-4000, -2000, 0, 2000, 4000]);
+  var sensRetorno = tabelaSensibilidadeRetorno(patrimonio, aporteMensal, anosAteApos, [0.04, 0.05, 0.06, 0.065, 0.07]);
+  var sensIdade = tabelaSensibilidadeIdade(patrimonio, aporteMensal, retorno, idade, [idadeApos - 2, idadeApos - 1, idadeApos, idadeApos + 1, idadeApos + 2]);
+
+  return {
+    // Entradas
+    idade: idade, patrimonio: patrimonio, rendaMensal: rendaMensal, aporteMensal: aporteMensal,
+    idadeApos: idadeApos, rendaDesejada: rendaDesejada, gastosMensais: gastosMensais,
+    retorno: retorno, anosAteApos: anosAteApos,
+    // Resultados principais
+    capitalFinal: capitalFinal,
+    capitalHumano: capitalHum,
+    riquezaTotal: riquezaTotal,
+    capitalNecessario: capitalNecessario,
+    pctMeta: pctMeta,
+    rendaAoAposentar: rendaAoAposentar,
+    rendaHojeEstim: rendaHojeEstim,
+    idadeParaMeta: idadeParaMeta,
+    aporteNecessario: aporteNecessario,
+    // Séries
+    cicloVida: cicloVida,
+    evolucaoBienal: evolucaoBienal,
+    // Sensibilidades
+    sensAporte: sensAporte,
+    sensRetorno: sensRetorno,
+    sensIdade: sensIdade
+  };
+}
+/* ═══ END FINANCIAL PLANNING ═══ */
+
+
 function migrateStock(s) {
   if (s.thesisPros && s.resultPros) return s;
   var allPros = s.pros || [];
@@ -1037,6 +1257,7 @@ function makeEmptyProfile() {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2,6),
     name: "", age: "", profession: "", maritalStatus: "",
     totalWealth: "", monthlyIncome: "", monthlyContribution: "",
+    retirementAge: "", desiredIncome: "", monthlyExpenses: "",
     experience: "Intermediário", riskProfile: "Moderado",
     horizon: "5", hasEmergencyReserve: true, liquidityNeed: "Baixa",
     longTermGoals: "", strategy: "",
@@ -1124,6 +1345,14 @@ function ClientProfileEditor(p) {
         <div><label style={lS}>Capacidade de aporte mensal (R$)</label><input value={prof.monthlyContribution||""} onChange={function(e){set("monthlyContribution",e.target.value);}} placeholder="Ex: 5000" style={iS}/></div>
       </div>
 
+      {/* Planejamento de Aposentadoria */}
+      <div style={secTitle}>Planejamento de Aposentadoria</div>
+      <div style={{display:"grid",gridTemplateColumns:compact?"1fr 1fr":"1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <div><label style={lS}>Idade de aposentadoria</label><input value={prof.retirementAge||""} onChange={function(e){set("retirementAge",e.target.value);}} placeholder="Ex: 60" type="number" style={iS}/></div>
+        <div><label style={lS}>Renda mensal desejada na aposentadoria (R$)</label><input value={prof.desiredIncome||""} onChange={function(e){set("desiredIncome",e.target.value);}} placeholder="Ex: 25000" style={iS}/></div>
+        <div><label style={lS}>Gastos mensais atuais (R$)</label><input value={prof.monthlyExpenses||""} onChange={function(e){set("monthlyExpenses",e.target.value);}} placeholder="Ex: 15000" style={iS}/></div>
+      </div>
+
       {/* Investor profile */}
       <div style={secTitle}>Perfil Investidor</div>
       <div style={{display:"grid",gridTemplateColumns:compact?"1fr 1fr":"1fr 1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
@@ -1189,6 +1418,464 @@ function ClientProfileEditor(p) {
     </div>
   );
 }
+
+/* ─── Client Editor with Tabs (Perfil | Planejamento) ─── */
+function ClientEditorWithTabs(p) {
+  var [activeTab, setActiveTab] = useState("perfil");
+  var tabBase = {flex:1,padding:"10px",border:"none",cursor:"pointer",fontWeight:700,fontSize:"11px",background:"transparent",color:"rgba(255,255,255,0.4)",borderBottom:"2px solid transparent"};
+  var tabActive = {color:"#DC2626",borderBottom:"2px solid #DC2626"};
+  return (
+    <div>
+      <div style={{display:"flex",gap:"4px",marginBottom:"16px",borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+        <button onClick={function(){setActiveTab("perfil");}} style={Object.assign({},tabBase,activeTab==="perfil"?tabActive:{})}>Perfil</button>
+        <button onClick={function(){setActiveTab("planejamento");}} style={Object.assign({},tabBase,activeTab==="planejamento"?tabActive:{})}>Planejamento</button>
+      </div>
+      {activeTab==="perfil" && <ClientProfileEditor profile={p.profile} onChange={p.onChange}/>}
+      {activeTab==="planejamento" && <PlanningTab profile={p.profile}/>}
+    </div>
+  );
+}
+
+/* ─── Planning Tab: Ciclo de Vida + Evolução + Sensibilidades ─── */
+function PlanningTab(p) {
+  var prof = p.profile || {};
+  // Verifica se há dados mínimos
+  var canCalc = prof.age && prof.totalWealth && prof.monthlyIncome;
+  if (!canCalc) {
+    return <div style={{padding:"40px 20px",textAlign:"center",color:"rgba(255,255,255,0.3)",fontSize:"12px",lineHeight:1.7}}>
+      Preencha na aba <b style={{color:"rgba(255,255,255,0.6)"}}>Perfil</b>:<br/>
+      <span style={{fontSize:"11px"}}>Idade · Patrimônio total · Renda mensal</span>
+    </div>;
+  }
+  var planej = calcularPlanejamento(prof);
+
+  var sectionTitle = {fontSize:"11px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"1px",margin:"18px 0 10px"};
+  var kpiCard = {background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.06)",borderRadius:"10px",padding:"12px 14px"};
+  var kpiLabel = {fontSize:"9px",fontWeight:600,color:"rgba(255,255,255,0.4)",textTransform:"uppercase",letterSpacing:"0.8px",marginBottom:"4px"};
+  var kpiValue = {fontSize:"16px",fontWeight:700,color:"#f1f5f9"};
+  var kpiAccent = {fontSize:"16px",fontWeight:700,color:"#DC2626"};
+
+  // Gráfico SVG do ciclo de vida
+  var cv = planej.cicloVida;
+  var maxY = Math.max.apply(null, cv.map(function(c){return c.riquezaTotal;}));
+  var minIdade = cv[0].idade;
+  var maxIdade = cv[cv.length-1].idade;
+  var gW = 560, gH = 180, pad = 30;
+  function x(idade) { return pad + (idade - minIdade) / Math.max(1, maxIdade - minIdade) * (gW - pad*2); }
+  function y(val) { return gH - pad - val / maxY * (gH - pad*2); }
+  function path(getVal) {
+    return cv.map(function(c, i){ return (i===0?"M ":"L ") + x(c.idade).toFixed(1) + " " + y(getVal(c)).toFixed(1); }).join(" ");
+  }
+
+  // Gráfico área de evolução
+  var ev = planej.evolucaoBienal;
+  var maxYE = Math.max(planej.capitalNecessario, Math.max.apply(null, ev.map(function(s){return s.patrimonio;})));
+  var eW = 560, eH = 180, epad = 30;
+  function xE(idade) { return epad + (idade - ev[0].idade) / Math.max(1, ev[ev.length-1].idade - ev[0].idade) * (eW - epad*2); }
+  function yE(val) { return eH - epad - val / maxYE * (eH - epad*2); }
+  var areaPath = "M " + xE(ev[0].idade).toFixed(1) + " " + (eH - epad).toFixed(1) + " " +
+    ev.map(function(s, i){ return "L " + xE(s.idade).toFixed(1) + " " + yE(s.patrimonio).toFixed(1); }).join(" ") +
+    " L " + xE(ev[ev.length-1].idade).toFixed(1) + " " + (eH - epad).toFixed(1) + " Z";
+
+  return (
+    <div>
+      {/* Resumo de inputs */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <div style={kpiCard}><div style={kpiLabel}>Patrimônio</div><div style={kpiValue}>{fmtBRL(planej.patrimonio)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>Retorno real a.a.</div><div style={kpiValue}>{fmtPct(planej.retorno, 2)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>Idade aposentadoria</div><div style={kpiValue}>{planej.idadeApos} anos</div></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <div style={kpiCard}><div style={kpiLabel}>Aporte mensal</div><div style={kpiValue}>{fmtBRL(planej.aporteMensal)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>Renda desejada</div><div style={kpiValue}>{fmtBRL(planej.rendaDesejada)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>Renda mensal atual</div><div style={kpiValue}>{fmtBRL(planej.rendaMensal)}</div></div>
+      </div>
+
+      {/* Ciclo de Vida */}
+      <div style={sectionTitle}>Objetivos — Ciclo de Vida</div>
+      <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"10px",padding:"14px",marginBottom:"12px"}}>
+        <svg width="100%" viewBox={"0 0 " + gW + " " + gH} style={{maxWidth:"100%"}} preserveAspectRatio="xMidYMid meet">
+          {/* Grid */}
+          <line x1={pad} y1={gH-pad} x2={gW-pad} y2={gH-pad} stroke="rgba(255,255,255,0.15)" strokeWidth="0.5"/>
+          <line x1={pad} y1={pad} x2={pad} y2={gH-pad} stroke="rgba(255,255,255,0.15)" strokeWidth="0.5"/>
+          {/* Capital Humano (decreasing) */}
+          <path d={path(function(c){return c.capitalHumano;})} stroke="#94a3b8" strokeWidth="1.5" fill="none"/>
+          {/* Capital Financeiro (growing) */}
+          <path d={path(function(c){return c.capitalFinanceiro;})} stroke="#60a5fa" strokeWidth="1.5" fill="none"/>
+          {/* Riqueza Total */}
+          <path d={path(function(c){return c.riquezaTotal;})} stroke="#DC2626" strokeWidth="2" fill="none"/>
+          {/* Eixo X (idades) */}
+          {[minIdade, Math.round((minIdade+maxIdade)/2), maxIdade].map(function(i){
+            return <text key={i} x={x(i)} y={gH-pad+12} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="middle">{i}</text>;
+          })}
+          {/* Legenda */}
+          <g transform={"translate(" + pad + "," + 12 + ")"}>
+            <circle cx="0" cy="3" r="3" fill="#94a3b8"/><text x="8" y="6" fontSize="9" fill="rgba(255,255,255,0.5)">Capital Humano</text>
+            <circle cx="100" cy="3" r="3" fill="#60a5fa"/><text x="108" y="6" fontSize="9" fill="rgba(255,255,255,0.5)">Capital Financeiro</text>
+            <circle cx="210" cy="3" r="3" fill="#DC2626"/><text x="218" y="6" fontSize="9" fill="rgba(255,255,255,0.5)">Riqueza Total</text>
+          </g>
+        </svg>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <div style={kpiCard}><div style={kpiLabel}>Capital ao aposentar</div><div style={kpiAccent}>{fmtBRL(planej.capitalFinal)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>% Meta</div><div style={kpiValue}>{fmtPct(planej.pctMeta, 1)}</div></div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <div style={kpiCard}><div style={kpiLabel}>Capital Humano</div><div style={kpiValue}>{fmtBRL(planej.capitalHumano)}</div></div>
+        <div style={kpiCard}><div style={kpiLabel}>Renda ao aposentar</div><div style={kpiAccent}>{fmtBRL(planej.rendaAoAposentar)}</div></div>
+      </div>
+
+      {/* Evolução */}
+      <div style={sectionTitle}>Objetivos — Evolução</div>
+      <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"10px",padding:"14px",marginBottom:"12px"}}>
+        <svg width="100%" viewBox={"0 0 " + eW + " " + eH} style={{maxWidth:"100%"}} preserveAspectRatio="xMidYMid meet">
+          <line x1={epad} y1={eH-epad} x2={eW-epad} y2={eH-epad} stroke="rgba(255,255,255,0.15)" strokeWidth="0.5"/>
+          <line x1={epad} y1={epad} x2={epad} y2={eH-epad} stroke="rgba(255,255,255,0.15)" strokeWidth="0.5"/>
+          {/* Linha da meta */}
+          <line x1={epad} y1={yE(planej.capitalNecessario)} x2={eW-epad} y2={yE(planej.capitalNecessario)} stroke="#fbbf24" strokeWidth="1" strokeDasharray="3,3"/>
+          <text x={eW-epad-5} y={yE(planej.capitalNecessario)-4} fontSize="8" fill="#fbbf24" textAnchor="end">Meta {fmtBRL(planej.capitalNecessario)}</text>
+          {/* Área */}
+          <path d={areaPath} fill="rgba(96,165,250,0.15)" stroke="#60a5fa" strokeWidth="1.5"/>
+          {/* Eixo X */}
+          {[ev[0].idade, Math.round((ev[0].idade+ev[ev.length-1].idade)/2), ev[ev.length-1].idade].map(function(i){
+            return <text key={i} x={xE(i)} y={eH-epad+12} fontSize="9" fill="rgba(255,255,255,0.4)" textAnchor="middle">{i}</text>;
+          })}
+        </svg>
+      </div>
+      <div style={{maxHeight:"200px",overflow:"auto",border:"1px solid rgba(255,255,255,0.06)",borderRadius:"8px",marginBottom:"12px"}}>
+        <table style={{width:"100%",fontSize:"10px",borderCollapse:"collapse"}}>
+          <thead><tr style={{background:"rgba(220,38,38,0.08)"}}>
+            <th style={{padding:"6px 10px",textAlign:"left",color:"#DC2626",fontWeight:700}}>Idade</th>
+            <th style={{padding:"6px 10px",textAlign:"right",color:"#DC2626",fontWeight:700}}>Patrimônio</th>
+            <th style={{padding:"6px 10px",textAlign:"right",color:"#DC2626",fontWeight:700}}>% Meta</th>
+          </tr></thead>
+          <tbody>{planej.evolucaoBienal.map(function(s){
+            var pct = planej.capitalNecessario>0 ? s.patrimonio/planej.capitalNecessario : 0;
+            return <tr key={s.ano} style={{borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+              <td style={{padding:"5px 10px",color:"rgba(255,255,255,0.7)"}}>{s.idade}</td>
+              <td style={{padding:"5px 10px",textAlign:"right",color:"#f1f5f9"}}>{fmtBRL(s.patrimonio)}</td>
+              <td style={{padding:"5px 10px",textAlign:"right",color:pct>=1?"#4ade80":"rgba(255,255,255,0.5)"}}>{fmtPct(pct, 0)}</td>
+            </tr>;
+          })}</tbody>
+        </table>
+      </div>
+
+      {/* Sensibilidades */}
+      <div style={sectionTitle}>Tabelas de Sensibilidade</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:"8px",marginBottom:"8px"}}>
+        <SensTable title="Aporte mensal" rows={planej.sensAporte} fmtKey={function(r){return fmtBRL(r.valor);}} highlight={planej.aporteMensal}/>
+        <SensTable title="Retorno a.a." rows={planej.sensRetorno} fmtKey={function(r){return fmtPct(r.valor, 1);}} highlight={planej.retorno}/>
+        <SensTable title="Idade aposent." rows={planej.sensIdade} fmtKey={function(r){return r.valor + " anos";}} highlight={planej.idadeApos}/>
+      </div>
+
+      {/* Export PDF */}
+      <button onClick={function(){generatePlanningPDF(prof, planej);}} style={{width:"100%",marginTop:"14px",padding:"12px",background:"#DC2626",color:"#fff",border:"none",borderRadius:"8px",fontWeight:700,fontSize:"12px",cursor:"pointer"}}>
+        Exportar Journey Book em PDF
+      </button>
+    </div>
+  );
+}
+
+function SensTable(p) {
+  return (
+    <div style={{background:"rgba(255,255,255,0.02)",borderRadius:"8px",border:"1px solid rgba(255,255,255,0.06)",overflow:"hidden"}}>
+      <div style={{padding:"6px 10px",background:"rgba(220,38,38,0.08)",fontSize:"9px",fontWeight:700,color:"#DC2626",textTransform:"uppercase",letterSpacing:"0.5px"}}>{p.title}</div>
+      <table style={{width:"100%",fontSize:"9px",borderCollapse:"collapse"}}>
+        <thead><tr>
+          <th style={{padding:"4px 8px",textAlign:"left",color:"rgba(255,255,255,0.4)",fontWeight:600}}>Valor</th>
+          <th style={{padding:"4px 8px",textAlign:"right",color:"rgba(255,255,255,0.4)",fontWeight:600}}>Renda</th>
+        </tr></thead>
+        <tbody>{p.rows.map(function(r,i){
+          var isH = Math.abs(r.valor - p.highlight) < 0.001 || (r.valor === p.highlight);
+          return <tr key={i} style={{background:isH?"rgba(220,38,38,0.06)":"transparent"}}>
+            <td style={{padding:"4px 8px",color:isH?"#DC2626":"rgba(255,255,255,0.6)",fontWeight:isH?700:400}}>{p.fmtKey(r)}</td>
+            <td style={{padding:"4px 8px",textAlign:"right",color:isH?"#f1f5f9":"rgba(255,255,255,0.5)",fontWeight:isH?700:400}}>{fmtBRL(r.renda)}</td>
+          </tr>;
+        })}</tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ─── Planning PDF Export (Journey Book style) ─── */
+function generatePlanningPDF(prof, planej) {
+  try {
+    var doc = new jsPDF({orientation:"landscape",unit:"mm",format:"a4"});
+    var W = doc.internal.pageSize.getWidth();
+    var H = doc.internal.pageSize.getHeight();
+    var ML = 20, MR = 20, MT = 18, MB = 18;
+    var CW = W - ML - MR;
+    var CLR = {
+      accent: [220, 38, 38],
+      dark: [30, 30, 30],
+      muted: [120, 120, 120],
+      body: [50, 50, 50],
+      cardBg: [250, 250, 250],
+      hairline: [220, 220, 220],
+      blue: [96, 165, 250],
+      grey: [148, 163, 184],
+      yellow: [251, 191, 36]
+    };
+    function setC(c){doc.setTextColor(c[0],c[1],c[2]);}
+    function setF(c){doc.setFillColor(c[0],c[1],c[2]);}
+    function setD(c){doc.setDrawColor(c[0],c[1],c[2]);}
+    var _origText = doc.text.bind(doc);
+    doc.text = function(text, x, y, options) {
+      if (typeof text === "string") text = sanitizePDFText(text);
+      else if (Array.isArray(text)) text = text.map(sanitizePDFText);
+      return _origText(text, x, y, options);
+    };
+
+    // ═══ CAPA ═══
+    setF(CLR.dark); doc.rect(0, 0, W, H, "F");
+    setF(CLR.accent); doc.rect(0, 0, 3, H, "F");
+    doc.setFontSize(11); doc.setFont("helvetica", "bold"); setC([255,255,255]);
+    doc.text("SUNO", ML, 20);
+    setC(CLR.accent); doc.text(" ( CONSULTORIA )", ML + 17, 20);
+    doc.setFontSize(48); doc.setFont("helvetica", "bold"); setC(CLR.accent);
+    doc.text("Journey", ML, 80);
+    setC([255,255,255]); doc.text("Book", ML + 72, 80);
+    doc.setFontSize(12); doc.setFont("helvetica", "normal"); setC([200,200,200]);
+    doc.text("Seus objetivos em pauta.", ML, 92);
+    doc.setFontSize(10); doc.setFont("helvetica", "normal"); setC([180,180,180]);
+    doc.text(new Date().toLocaleDateString("pt-BR"), ML, 140);
+    doc.setFontSize(28); doc.setFont("helvetica", "bold"); setC([255,255,255]);
+    doc.text(prof.name || "Cliente", ML, 158);
+
+    // ═══ PÁGINA 2: Ciclo de Vida ═══
+    doc.addPage();
+    drawHeader("Objetivos — Ciclo de Vida");
+    // KPIs à esquerda
+    var yL = 45;
+    drawKPI(ML, yL, "Patrimônio", fmtBRL(planej.patrimonio)); yL += 16;
+    drawKPI(ML, yL, "Retorno real a.a.", fmtPct(planej.retorno, 2)); yL += 16;
+    drawKPI(ML, yL, "Idade aposentadoria", planej.idadeApos + " anos"); yL += 16;
+    drawKPI(ML, yL, "Aporte mensal", fmtBRL(planej.aporteMensal)); yL += 16;
+    drawKPI(ML, yL, "Renda desejada", fmtBRL(planej.rendaDesejada)); yL += 16;
+    drawKPI(ML, yL, "Renda mensal atual", fmtBRL(planej.rendaMensal)); yL += 16;
+
+    // Gráfico no centro
+    var gX = ML + 75, gY = 50, gW2 = 140, gH2 = 85;
+    drawChartLifeCycle(gX, gY, gW2, gH2, planej);
+
+    // KPIs à direita
+    var yR = 50;
+    drawKPIBig(gX + gW2 + 20, yR, "Capital ao aposentar", fmtBRL(planej.capitalFinal), fmtPct(planej.pctMeta, 2) + " da meta"); yR += 24;
+    drawKPIBig(gX + gW2 + 20, yR, "Capital Humano", fmtBRL(planej.capitalHumano), planej.idadeParaMeta ? planej.idadeParaMeta.idade + " a " + planej.idadeParaMeta.meses + "m para meta" : ""); yR += 24;
+    drawKPIBig(gX + gW2 + 20, yR, "Renda hoje (estim.)", fmtBRL(planej.rendaHojeEstim), "Renda ao aposentar: " + fmtBRL(planej.rendaAoAposentar)); yR += 24;
+
+    // Rodapé explicativo
+    doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+    var note1 = "Capital Financeiro: patrimônio atual + aportes capitalizados à taxa de " + fmtPct(planej.retorno, 2) + " a.a.";
+    var note2 = "Capital Humano: valor presente da renda futura descontada à mesma taxa.";
+    var note3 = "Riqueza Total: Capital Financeiro + Capital Humano.";
+    doc.text(note1, ML, H - MB - 8);
+    doc.text(note2, ML, H - MB - 4);
+    doc.text(note3, ML, H - MB);
+
+    // ═══ PÁGINA 3: Evolução ═══
+    doc.addPage();
+    drawHeader("Objetivos — Evolução");
+    // KPIs esquerda
+    var yL2 = 45;
+    drawKPI(ML, yL2, "Patrimônio", fmtBRL(planej.patrimonio)); yL2 += 16;
+    drawKPI(ML, yL2, "Retorno real a.a.", fmtPct(planej.retorno, 2)); yL2 += 16;
+    drawKPI(ML, yL2, "Idade aposentadoria", planej.idadeApos + " anos"); yL2 += 16;
+    drawKPI(ML, yL2, "Aporte mensal", fmtBRL(planej.aporteMensal)); yL2 += 16;
+    drawKPI(ML, yL2, "Renda desejada", fmtBRL(planej.rendaDesejada)); yL2 += 16;
+    drawKPI(ML, yL2, "Renda mensal atual", fmtBRL(planej.rendaMensal));
+
+    // Gráfico evolução
+    drawChartEvolution(ML + 75, 50, 90, 70, planej);
+    // KPIs sob o gráfico
+    drawKPIBig(ML + 75, 130, "Capital ao aposentar", fmtBRL(planej.capitalFinal), fmtPct(planej.pctMeta, 2));
+    drawKPIBig(ML + 130, 130, "Aporte necessário", fmtBRL(planej.aporteNecessario), "p/ atingir meta");
+    drawKPIBig(ML + 75, 155, "Renda hoje (estim.)", fmtBRL(planej.rendaHojeEstim), "");
+    drawKPIBig(ML + 130, 155, "Renda ao aposentar", fmtBRL(planej.rendaAoAposentar), "");
+
+    // Tabela à direita
+    drawEvolutionTable(ML + 180, 45, 75, planej);
+
+    // ═══ PÁGINA 4: Tabelas de Sensibilidade ═══
+    doc.addPage();
+    drawHeader("Objetivos — Tabelas de Sensibilidade");
+    // 4 KPIs no topo
+    var kpiY = 40;
+    var kpiW = (CW - 30) / 4;
+    drawKPITop(ML + 0*(kpiW+10), kpiY, kpiW, "Patrimônio atual", fmtBRL(planej.patrimonio));
+    drawKPITop(ML + 1*(kpiW+10), kpiY, kpiW, "Idade aposentadoria", planej.idadeApos + " anos");
+    drawKPITop(ML + 2*(kpiW+10), kpiY, kpiW, "Retorno a.a.", fmtPct(planej.retorno, 2));
+    drawKPITop(ML + 3*(kpiW+10), kpiY, kpiW, "Aporte mensal", fmtBRL(planej.aporteMensal));
+
+    // 3 tabelas
+    var tY = 80;
+    var tW = (CW - 20) / 3;
+    drawSensTableToPDF(ML + 0*(tW+10), tY, tW, "Retorno a.a.", planej.sensRetorno, function(r){return fmtPct(r.valor, 2);}, planej.retorno);
+    drawSensTableToPDF(ML + 1*(tW+10), tY, tW, "Idade aposent.", planej.sensIdade, function(r){return r.valor + " anos";}, planej.idadeApos);
+    drawSensTableToPDF(ML + 2*(tW+10), tY, tW, "Aporte mensal", planej.sensAporte, function(r){return fmtBRL(r.valor);}, planej.aporteMensal);
+
+    // Rodapé
+    doc.setFontSize(7); doc.setFont("helvetica", "italic"); setC(CLR.muted);
+    doc.text("Cenários e simulações baseados nas premissas do perfil. Não representam promessa de rentabilidade.", ML, H - MB);
+
+    // Footer em todas as páginas
+    var pc = doc.internal.getNumberOfPages();
+    for (var pg = 2; pg <= pc; pg++) {
+      doc.setPage(pg);
+      setF(CLR.accent); doc.rect(0, H-2, W, 2, "F");
+      doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+      doc.text("Journey Book · " + (prof.name || ""), ML, H-6);
+      doc.text((pg-1) + " / " + (pc-1), W-MR, H-6, {align:"right"});
+    }
+
+    // Helpers locais
+    function drawHeader(title) {
+      setF([245,245,245]); doc.rect(0, 0, W, 30, "F");
+      doc.setFontSize(16); doc.setFont("helvetica", "bold"); setC(CLR.dark);
+      doc.text(title, ML, 18);
+      setF(CLR.accent); doc.rect(ML, 22, 15, 1, "F");
+    }
+    function drawKPI(x, y, label, value) {
+      setD(CLR.hairline); doc.setLineWidth(0.2);
+      doc.roundedRect(x, y, 60, 13, 2, 2, "S");
+      doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+      doc.text(label, x+3, y+5);
+      doc.setFontSize(10); doc.setFont("helvetica", "bold"); setC(CLR.dark);
+      doc.text(value, x+3, y+10);
+    }
+    function drawKPIBig(x, y, label, value, sub) {
+      doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+      doc.text(label, x, y);
+      doc.setFontSize(12); doc.setFont("helvetica", "bold"); setC(CLR.accent);
+      doc.text(value, x, y+6);
+      if (sub) {
+        doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+        doc.text(sub, x, y+11);
+      }
+    }
+    function drawKPITop(x, y, w, label, value) {
+      setD(CLR.hairline); doc.setLineWidth(0.2);
+      doc.roundedRect(x, y, w, 16, 2, 2, "S");
+      doc.setFontSize(8); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+      doc.text(label, x+w/2, y+6, {align:"center"});
+      doc.setFontSize(12); doc.setFont("helvetica", "bold"); setC(CLR.dark);
+      doc.text(value, x+w/2, y+13, {align:"center"});
+    }
+    function drawChartLifeCycle(cx, cy, cw, ch, pln) {
+      var cv2 = pln.cicloVida;
+      var maxV = Math.max.apply(null, cv2.map(function(c){return c.riquezaTotal;}));
+      var minI = cv2[0].idade, maxI = cv2[cv2.length-1].idade;
+      function xx(i){return cx + (i-minI)/Math.max(1,maxI-minI)*cw;}
+      function yy(v){return cy+ch - v/maxV*ch;}
+      // Axes
+      setD(CLR.hairline); doc.setLineWidth(0.3);
+      doc.line(cx, cy+ch, cx+cw, cy+ch);
+      doc.line(cx, cy, cx, cy+ch);
+      // Lines
+      function drawLine(color, getVal, thick) {
+        setD(color); doc.setLineWidth(thick||0.5);
+        for (var i=1;i<cv2.length;i++) {
+          doc.line(xx(cv2[i-1].idade), yy(getVal(cv2[i-1])), xx(cv2[i].idade), yy(getVal(cv2[i])));
+        }
+      }
+      drawLine(CLR.grey, function(c){return c.capitalHumano;}, 0.6);
+      drawLine(CLR.blue, function(c){return c.capitalFinanceiro;}, 0.6);
+      drawLine(CLR.accent, function(c){return c.riquezaTotal;}, 0.8);
+      // Legend
+      doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.muted);
+      setF(CLR.grey); doc.circle(cx, cy-3, 1, "F"); doc.text("Capital Humano", cx+3, cy-2);
+      setF(CLR.blue); doc.circle(cx+38, cy-3, 1, "F"); doc.text("Capital Financeiro", cx+41, cy-2);
+      setF(CLR.accent); doc.circle(cx+80, cy-3, 1, "F"); doc.text("Riqueza Total", cx+83, cy-2);
+      // X labels
+      doc.setFontSize(7); setC(CLR.muted);
+      doc.text(String(minI), xx(minI), cy+ch+4, {align:"center"});
+      doc.text(String(maxI), xx(maxI), cy+ch+4, {align:"center"});
+      doc.text(String(Math.round((minI+maxI)/2)), xx((minI+maxI)/2), cy+ch+4, {align:"center"});
+    }
+    function drawChartEvolution(cx, cy, cw, ch, pln) {
+      var ev2 = pln.evolucaoBienal;
+      var maxV = Math.max(pln.capitalNecessario, Math.max.apply(null, ev2.map(function(s){return s.patrimonio;})));
+      var minI = ev2[0].idade, maxI = ev2[ev2.length-1].idade;
+      function xx(i){return cx + (i-minI)/Math.max(1,maxI-minI)*cw;}
+      function yy(v){return cy+ch - v/maxV*ch;}
+      // Axes
+      setD(CLR.hairline); doc.setLineWidth(0.3);
+      doc.line(cx, cy+ch, cx+cw, cy+ch);
+      doc.line(cx, cy, cx, cy+ch);
+      // Meta line (dashed)
+      setD(CLR.yellow); doc.setLineWidth(0.4);
+      var metaY = yy(pln.capitalNecessario);
+      for (var dx = 0; dx < cw; dx += 4) { doc.line(cx+dx, metaY, cx+Math.min(dx+2, cw), metaY); }
+      doc.setFontSize(6); setC(CLR.yellow);
+      doc.text("Meta " + fmtBRL(pln.capitalNecessario), cx+cw-1, metaY-1, {align:"right"});
+      // Area
+      setF([96, 165, 250]);
+      var poly = [];
+      ev2.forEach(function(s){ poly.push([xx(s.idade), yy(s.patrimonio)]); });
+      // Line
+      setD(CLR.blue); doc.setLineWidth(0.8);
+      for (var i=1;i<ev2.length;i++) {
+        doc.line(xx(ev2[i-1].idade), yy(ev2[i-1].patrimonio), xx(ev2[i].idade), yy(ev2[i].patrimonio));
+      }
+      // X labels
+      doc.setFontSize(7); setC(CLR.muted);
+      doc.text(String(minI), xx(minI), cy+ch+4, {align:"center"});
+      doc.text(String(maxI), xx(maxI), cy+ch+4, {align:"center"});
+    }
+    function drawEvolutionTable(x, y, w, pln) {
+      var rowH = 8;
+      setF(CLR.accent); doc.rect(x, y, w, rowH, "F");
+      doc.setFontSize(8); doc.setFont("helvetica", "bold"); setC([255,255,255]);
+      doc.text("Idade", x+3, y+5);
+      doc.text("Patrimônio", x+18, y+5);
+      doc.text("% Meta", x+w-3, y+5, {align:"right"});
+      var ry = y + rowH;
+      pln.evolucaoBienal.forEach(function(s, i){
+        var pct = pln.capitalNecessario>0 ? s.patrimonio/pln.capitalNecessario : 0;
+        if (i % 2 === 0) { setF([245,245,245]); doc.rect(x, ry, w, rowH, "F"); }
+        doc.setFontSize(7); doc.setFont("helvetica", "normal"); setC(CLR.dark);
+        doc.text(String(s.idade), x+3, ry+5);
+        doc.text(fmtBRL(s.patrimonio), x+18, ry+5);
+        setC(pct >= 1 ? [74, 163, 128] : CLR.muted);
+        doc.text(fmtPct(pct, 0), x+w-3, ry+5, {align:"right"});
+        ry += rowH;
+      });
+    }
+    function drawSensTableToPDF(x, y, w, title, rows, fmtKey, highlight) {
+      var rowH = 10;
+      // Header do título
+      setF([245,245,245]); doc.rect(x, y, w, 10, "F");
+      doc.setFontSize(9); doc.setFont("helvetica", "bold"); setC(CLR.dark);
+      doc.text(title, x+w/2, y+7, {align:"center"});
+      var hy = y + 10;
+      // Cabeçalho de colunas
+      setF(CLR.hairline); doc.rect(x, hy, w, 8, "F");
+      doc.setFontSize(7); doc.setFont("helvetica", "bold"); setC(CLR.muted);
+      doc.text("Valor", x+3, hy+5);
+      doc.text("Patrimônio", x+w/2-5, hy+5);
+      doc.text("Renda", x+w-3, hy+5, {align:"right"});
+      var ry = hy + 8;
+      rows.forEach(function(r, i){
+        var isH = Math.abs(r.valor - highlight) < 0.001 || (r.valor === highlight);
+        if (isH) { setF([253, 230, 230]); doc.rect(x, ry, w, rowH, "F"); }
+        else if (i % 2 === 0) { setF([250,250,250]); doc.rect(x, ry, w, rowH, "F"); }
+        doc.setFontSize(8); doc.setFont("helvetica", isH?"bold":"normal"); setC(isH?CLR.accent:CLR.dark);
+        doc.text(fmtKey(r), x+3, ry+6);
+        setC(CLR.dark);
+        doc.text(fmtBRL(r.patrimonio), x+w/2-5, ry+6);
+        doc.text(fmtBRL(r.renda), x+w-3, ry+6, {align:"right"});
+        ry += rowH;
+      });
+    }
+
+    var fname = "journey-book-" + (prof.name || "cliente").toLowerCase().replace(/\s+/g,"-") + "-" + new Date().toISOString().slice(0,10) + ".pdf";
+    doc.save(fname);
+  } catch (err) {
+    console.error("PDF planning err:", err);
+    alert("Erro ao gerar PDF: " + err.message);
+  }
+}
+
 
 function ClientProfilesModal(p) {
   var [profiles, setProfiles] = useState(function(){return loadClientProfiles();});
@@ -1264,7 +1951,7 @@ function ClientProfilesModal(p) {
             })}
           </div>)}
           {editing && editData && (<div>
-            <ClientProfileEditor profile={editData} onChange={setEditData}/>
+            <ClientEditorWithTabs profile={editData} onChange={setEditData}/>
             <div style={{display:"flex",gap:"8px",marginTop:"14px"}}>
               <button onClick={cancelEdit} style={Object.assign({},btnBase,{background:"transparent",border:"1px solid rgba(255,255,255,0.1)",color:"rgba(255,255,255,0.4)"})}>Cancelar</button>
               <button onClick={saveEdit} disabled={!editData.name.trim()} style={Object.assign({},btnBase,{flex:1,background:editData.name.trim()?"#DC2626":"rgba(255,255,255,0.05)",color:editData.name.trim()?"#fff":"rgba(255,255,255,0.3)"})}>Salvar Perfil</button>
